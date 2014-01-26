@@ -413,6 +413,10 @@ void *PrintHello(void *threadid)
 		if(r!=4)
 			continue;
 
+		if(offset > (unsigned long long)400*1024*1024*1024){
+			offset = (offset+bytes)%((unsigned long long)400*1024*1024*1024);
+		}
+
 		if (!strcmp(act, "read")){
 			if(io_read(alignedbuff, bytes, offset, &micro_result) < 0 )
 				continue;
@@ -486,6 +490,7 @@ int main(int argc, char **argv){
 
 	strcpy(filename, argv[2]);
 	open_flags = O_RDWR|O_SYNC;
+	//open_flags = O_RDWR;
 	if(disk_open(filename,open_flags) < 0)
 		return -1;
 
@@ -523,97 +528,13 @@ int main(int argc, char **argv){
 	gettimeofday(&tv_end, NULL);
 	timeval_subtract(&tv_result, &tv_end, &tv_start);
 
-	printf("Total: %.6f secdons\n", tv_to_sec(&tv_result));
+	printf("Total: %.6f seconds\n", tv_to_sec(&tv_result));
 	printf("Total: %llu operations \n", total_operations);
 	printf("Total: %f iops\n", (double)total_operations/tv_to_sec(&tv_result));
 	printf("Total: %f MB/s\n", (double)total_bytes/(1024*1024)/tv_to_sec(&tv_result));
 	printf("Total: %f MB\n", (double)total_bytes/(1024*1024));
 	fflush(stdout);
 
-	return 0;
-
-
-	while((opt = getopt(argc, argv, "srRWf:p:k:")) != -1)
-	{
-		switch(opt)
-		{
-			case 's':
-				opt_s = 1; // sequential workload
-				break;
-			case 'r':
-				opt_r = 1; // random worklod 
-				break;
-			case 'R':
-				opt_R = 1; // Read I/O
-				break;
-			case 'W':
-				opt_W = 1; // Write I/O
-				break;
-			case 'f':
-				memcpy(filename, optarg, strlen(optarg)+1); 
-				break;
-			case 'p': // partition size 
-				part_size = atoi(optarg);
-				break;
-			case 'k': // max request size 
-				max_req_size = atoi(optarg);
-				break;
-		}
-	}
-
-	if(part_size <= 0 || max_req_size <= 0)
-	{
-		printf(" Invalid Partition Size = %d MB\n", part_size);
-		printf(" Invalid Max Request Size = %d MB\n", max_req_size);
-		return 0;
-	}
-
-	printf(" Partition size = %d MB\n", part_size);
-	printf(" Request Range = 4 KB ~ %d MB \n", max_req_size);
-
-
-	if(access(filename, R_OK) != 0)
-	{
-		printf(" Not exists file = %s \n", filename);
-		return 0;
-	}
-
-	open_flags = O_RDWR | O_DIRECT;
-	if(disk_open(filename,open_flags) < 0)
-		return -1;
-
-	if(opt_R){
-
-		if(opt_s){
-			is_rw = 1;
-			is_rand = 0;
-			start_io_test(is_rw, is_rand, part_size, max_req_size);
-		}
-
-		if(opt_r){
-			is_rw = 1;
-			is_rand = 1;
-			start_io_test(is_rw, is_rand, part_size, max_req_size);
-		}
-	}
-
-	if(opt_W){
-
-		if(opt_s){
-			is_rw = 0;
-			is_rand = 0;
-			start_io_test(is_rw, is_rand, part_size, max_req_size);
-		}
-
-		if(opt_r){
-			is_rw = 0;
-			is_rand = 1;
-			start_io_test(is_rw, is_rand, part_size, max_req_size);
-		}
-
-	}
-
-	disk_close();
 	return 0;
 }
 

@@ -33,6 +33,7 @@ clean:
 distclean:
 	rm -f Makefile.bak *.o *.a *~ .depend $(TARGET)
 install: 
+	cp $(TARGET) /usr/local/bin
 
 uninstall:
 

@@ -20,6 +20,7 @@ int disk_open(const char *dev,int flag){
 
 void disk_close(){
 	
+	flush_buffer_cache(fd);
 	close(fd);
 }
 
