@@ -354,6 +354,7 @@ FILE *trace_fp;
 int done = 0;
 unsigned long long total_operations = 0;
 unsigned long long total_bytes = 0;
+unsigned long long total_error_bytes = 0;
 
 void *PrintHello(void *threadid)
 {
@@ -365,6 +366,7 @@ void *PrintHello(void *threadid)
 	char *alignedbuff = NULL;
 	unsigned long long operations = 0;
 	unsigned long long sum_bytes = 0;
+	unsigned long long error_bytes = 0;
 
 
 	str = malloc(4096);
@@ -413,18 +415,42 @@ void *PrintHello(void *threadid)
 		if(r!=4)
 			continue;
 
+	/*	if(offset % getpagesize()){
+			printf(" rem = %llu \n", offset % getpagesize());
+			printf(" rem = %llu \n", (unsigned long long)bytes % getpagesize());
+		} */
+
+		if(offset % getpagesize()){
+			offset = offset - (offset % getpagesize());
+		}
+		if(bytes%getpagesize()){
+			bytes = bytes + getpagesize() - (bytes % getpagesize());
+		}
+
 		if(offset > (unsigned long long)400*1024*1024*1024){
 			offset = (offset+bytes)%((unsigned long long)400*1024*1024*1024);
 		}
+#if 0 
+		if(offset % getpagesize() == 0){
+			//printf (" corrected .. \n");
+		}
+#endif 
 
 		if (!strcmp(act, "read")){
-			if(io_read(alignedbuff, bytes, offset, &micro_result) < 0 )
+			if(io_read(alignedbuff, bytes, offset, &micro_result) < 0 ){
+				error_bytes += bytes;
 				continue;
+			}
 		}else if (!strcmp(act, "write")){
-			if(io_write(alignedbuff, bytes, offset, &micro_result) < 0 )
+			if(io_write(alignedbuff, bytes, offset, &micro_result) < 0 ){
+				error_bytes += bytes;
 				continue;
+			}
 		}
 
+		if(error_bytes>1*1024*1024*1024){
+			printf(" Error exceeds %llu\n", (unsigned long long)error_bytes/1024/1024);
+		}
 		operations++;
 		sum_bytes+=bytes;
 	}
@@ -432,6 +458,7 @@ void *PrintHello(void *threadid)
 	pthread_spin_lock(&spinlock);
 	total_operations+=operations;
 	total_bytes += sum_bytes;
+	total_error_bytes += error_bytes;
 	pthread_spin_unlock(&spinlock);
 	//printf (" pthread end id = %d \n", (int)tid);
 
@@ -490,7 +517,6 @@ int main(int argc, char **argv){
 
 	strcpy(filename, argv[2]);
 	open_flags = O_RDWR|O_SYNC;
-	//open_flags = O_RDWR;
 	if(disk_open(filename,open_flags) < 0)
 		return -1;
 
@@ -533,6 +559,7 @@ int main(int argc, char **argv){
 	printf("Total: %f iops\n", (double)total_operations/tv_to_sec(&tv_result));
 	printf("Total: %f MB/s\n", (double)total_bytes/(1024*1024)/tv_to_sec(&tv_result));
 	printf("Total: %f MB\n", (double)total_bytes/(1024*1024));
+	printf("Total: error %f MB\n", (double)total_error_bytes/(1024*1024));
 	fflush(stdout);
 
 	return 0;
