@@ -3,7 +3,7 @@ TARGET =  trace_replay
 SRCS   =  trace_replay.o disk_io.o sgio.o identify.o
 
 CFLAGS :=  -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64   
-LDFLAGS := -lpthread
+LDFLAGS := -lpthread -laio
 
 
 
