@@ -291,7 +291,7 @@ void *sub_worker(void *threadid)
 
 		wait_completion(t_info, cnt);
 		iter++;
-		if(iter>10000){
+		if(iter>100){
 			gettimeofday(&io_stat->end_time, NULL);
 			io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
 			if(io_stat->execution_time >t_info->timeout && t_info->timeout>0.0){
@@ -315,7 +315,7 @@ Timeout:
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
 
-	printf (" pthread end id = %d \n", (int)tid);
+	//printf (" pthread end id = %d \n", (int)tid);
 
 
 	return NULL;
