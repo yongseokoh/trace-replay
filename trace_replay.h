@@ -55,6 +55,7 @@ struct thread_info_t{
 
 	FILE *trace_fp;
 	char filename[STR_SIZE];
+	char tracename[STR_SIZE];
 
 	int done;
 };

@@ -334,6 +334,7 @@ int print_result(int nr_thread, FILE *fp){
 
 		fprintf(fp, "\n");
 		fprintf(fp, " Thread %d I/O statistics \n", i);
+		fprintf(fp, " Trace name = %s \n", th_info[i].tracename);
 		fprintf(fp, " Execution time = %f sec\n", io_stat->execution_time);
 		fprintf(fp, " Avg latency = %f sec\n", (double)io_stat->latency_sum/io_stat->latency_count);
 		fprintf(fp, " IOPS = %f\n", io_stat->latency_count/io_stat->execution_time);
@@ -354,7 +355,9 @@ int print_result(int nr_thread, FILE *fp){
 	fprintf(fp, "\n Aggregrated Result \n");
 	fprintf(fp, " Agg Execution time: %.6f sec\n", execution_time);
 	fprintf(fp, " Agg IOPS = %f \n", (double)total_ios/execution_time);
-	fprintf(fp, " Agg bandwidth = %f MB/s \n", (double)total_bytes/MB/execution_time);
+	fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_bytes/MB/execution_time);
+	fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_rbytes/MB/execution_time);
+	fprintf(fp, " Agg Write bandwidth = %f MB/s \n", (double)total_wbytes/MB/execution_time);
 	fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_bytes/MB);
 	fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_rbytes/MB);
 	fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_wbytes/MB);
@@ -426,6 +429,7 @@ int main(int argc, char **argv){
 			printf("file open error %s\n", argv[argc_offset+t]);
 			return -1;
 		}
+		strcpy(t_info->tracename, argv[argc_offset+t]);
 		strcpy(t_info->filename, argv[ARG_DEV]);
 		fprintf(result_fp, " %d thread using %s trace \n", (int)t, t_info->filename);
 
