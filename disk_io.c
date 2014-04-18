@@ -2,12 +2,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/mount.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#ifndef ENOIOCTLCMD
+#	define ENOIOCTLCMD ENOTTY
+#endif
 
 
-int fd;
 int verbose;
 
 int disk_open(const char *dev,int flag){
+	int fd;
 	
 	fd = open(dev, flag);
 	if(fd < 0)
@@ -18,8 +26,17 @@ int disk_open(const char *dev,int flag){
 	return fd;
 }
 
-void disk_close(){
-	
+void flush_buffer_cache (int fd)
+{
+	fsync (fd);				/* flush buffers */
+	if (ioctl(fd, BLKFLSBUF, NULL))		/* do it again, big time */
+		perror("BLKFLSBUF failed");
+	/* await completion */
+	if (do_drive_cmd(fd, NULL) && errno != EINVAL && errno != ENOTTY && errno != ENOIOCTLCMD)
+		perror("HDIO_DRIVE_CMD(null) (wait for flush complete) failed");
+}
+
+void disk_close(int fd){
 	flush_buffer_cache(fd);
 	close(fd);
 }
@@ -27,7 +44,7 @@ void disk_close(){
 int io_read(char *buf, unsigned int req_size, unsigned long long offset, struct timeval *tv_result){
 	struct timeval tv_start, tv_end;
     int i = 0;
-  	FILE *fp = NULL;
+	int fd;
 
 	__u64 temp = (__u64)offset;
 
@@ -51,7 +68,7 @@ int io_read(char *buf, unsigned int req_size, unsigned long long offset, struct 
 int io_write(char *buf, unsigned int req_size, unsigned long offset, struct timeval *tv_result){
 	struct timeval tv_start, tv_end;
     int i = 0;
-  	FILE *fp = NULL;
+	int fd;
 
 	__u64 temp = (__u64)offset;
 

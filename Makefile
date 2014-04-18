@@ -3,7 +3,7 @@ TARGET =  trace_replay
 SRCS   =  trace_replay.o disk_io.o sgio.o identify.o
 
 CFLAGS :=  -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64   
-LDFLAGS := -lpthread -laio
+LDFLAGS := -lpthread -laio -lrt 
 
 
 
@@ -17,7 +17,7 @@ OBJS=$(SRCS:.c=.o)
 .c.o:
 	@echo "Compiling $< ..."
 	@$(RM) $@
-	$(CC) -c -O2 -g  -D_GNU_SOURCE $(CFLAGS) -o $@ $<
+	$(CC) -c -O2 -g  -D_GNU_SOURCE $(CFLAGS) -lrt -o $@ $<
 #$(CC) -c -O2 -D_GNU_SOURCE $(CFLAGS) -o $@ $<
 
 $(TARGET):     $(OBJS)
