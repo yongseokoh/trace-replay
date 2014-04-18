@@ -254,7 +254,7 @@ void usage_help(){
 }
 
 
-#define MAX_QDEPTH 128
+#define MAX_QDEPTH 1
 #define NUM_THREADS 128
 
 int nr_thread;
@@ -297,6 +297,97 @@ struct io_job{
 };
 
 
+#if 0
+void *sub_worker(void *threadid)
+{
+	long tid =  (long)threadid;
+	struct io_job *job, *test_job;
+	struct io_job *jobq[MAX_QDEPTH];
+	struct iocb *ioq[MAX_QDEPTH];
+	int rc;
+
+	//printf (" pthread start id = %d \n", (int)tid);
+
+	while(1){
+		struct flist_head *ptr, *tmp;
+		int cnt = 0;
+		int complete_count = 0;
+		int i, k;
+
+		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
+		for(k = 0;k < 1;k++){
+			unsigned long page;
+			job = (struct io_job *)malloc(sizeof(struct io_job));
+
+			page = RND(th_info[i].total_pages);
+			job->offset = (long long)page * PAGE_SIZE;
+			job->bytes = PAGE_SIZE;
+			job->rw = 0;
+			job->buf = allocate_aligned_buffer(job->bytes);
+
+			gettimeofday(&job->start_time, NULL);
+			flist_add_tail(&job->list, &th_info[tid].queue);
+			th_info[tid].queue_count++;
+
+			pthread_spin_lock(&spinlock);
+			total_bytes += job->bytes;
+			pthread_spin_unlock(&spinlock);
+		}
+
+		flist_for_each_safe(ptr, tmp, &th_info[tid].queue){
+			job = flist_entry(ptr, struct io_job, list);
+			flist_del(&job->list);
+			th_info[tid].queue_count--;
+			jobq[cnt++] = job;
+		}
+		//pthread_mutex_unlock(&th_info[tid].mutex);
+		//pthread_cond_signal(&th_info[tid].cond_main);
+
+		if(!cnt)
+			continue;
+
+		
+		for(i = 0;i < cnt;i++){
+			job = jobq[i]; 
+			ioq[i] = &job->iocb;
+			if(job->rw)
+				io_prep_pread(&job->iocb, th_info[tid].fd, job->buf, job->bytes, job->offset);
+			else
+				io_prep_pwrite(&job->iocb, th_info[tid].fd, job->buf, job->bytes, job->offset);
+		}
+
+		rc = io_submit(th_info[tid].io_ctx, cnt, ioq);
+		if (rc < 0)
+			io_error("io_submit", rc);
+
+		while(cnt){
+			complete_count = io_getevents(th_info[tid].io_ctx, cnt, cnt, th_info[tid].events, NULL);
+			for(i = 0;i < complete_count;i++){
+				test_job = (struct io_job *)((unsigned long)th_info[tid].events[i].obj);
+				gettimeofday(&test_job->stop_time, NULL);
+				//printf(" tid = %d,no = %d blkno = %d, bytes = %d, lat = %f\n",
+				//		(int) tid, i, (int)test_job->offset, (int)test_job->bytes,
+				//		time_since(&test_job->start_time, &test_job->stop_time));
+
+			//	pthread_mutex_lock(&th_info[tid].mutex);
+				th_info[tid].latency_sum += time_since(&test_job->start_time, &test_job->stop_time);
+				th_info[tid].latency_count ++;
+			//	pthread_mutex_unlock(&th_info[tid].mutex);
+				cnt--;
+
+				free(test_job->buf);
+				free(test_job);
+			}
+		}
+	}
+
+	printf (" pthread end id = %d \n", (int)tid);
+
+
+	return NULL;
+}
+
+#else
 void *sub_worker(void *threadid)
 {
 	long tid =  (long)threadid;
@@ -322,21 +413,19 @@ void *sub_worker(void *threadid)
 
 		flist_for_each_safe(ptr, tmp, &th_info[tid].queue){
 			job = flist_entry(ptr, struct io_job, list);
-			//gettimeofday(&job->start_time, NULL);
+			gettimeofday(&job->start_time, NULL);
 			flist_del(&job->list);
 			th_info[tid].queue_count--;
-			th_info[tid].active_count++;
 			jobq[cnt++] = job;
-			if(th_info[tid].active_count>=MAX_QDEPTH)
-				break;
 		}
 		pthread_mutex_unlock(&th_info[tid].mutex);
-
 		pthread_cond_signal(&th_info[tid].cond_main);
 
 		if(!cnt)
 			continue;
 
+		
+#if 1
 		for(i = 0;i < cnt;i++){
 			job = jobq[i]; 
 			ioq[i] = &job->iocb;
@@ -353,7 +442,7 @@ void *sub_worker(void *threadid)
 		while(cnt){
 
 			//printf(" io getevents \n");
-			complete_count = io_getevents(th_info[tid].io_ctx, 1, cnt, th_info[tid].events, NULL);
+			complete_count = io_getevents(th_info[tid].io_ctx, cnt, cnt, th_info[tid].events, NULL);
 			//printf(" complete count = %d cnt = %d \n", complete_count, cnt);
 
 			for(i = 0;i < complete_count;i++){
@@ -364,9 +453,11 @@ void *sub_worker(void *threadid)
 				//		time_since(&test_job->start_time, &test_job->stop_time));
 
 				pthread_mutex_lock(&th_info[tid].mutex);
-				th_info[tid].active_count--;
+			//	th_info[tid].active_count--;
 				th_info[tid].latency_sum += time_since(&test_job->start_time, &test_job->stop_time);
 				th_info[tid].latency_count ++;
+				//if(th_info[i].queue_count)
+				//	printf(" wait ... qcount = %d\n", th_info[i].queue_count);
 				pthread_mutex_unlock(&th_info[tid].mutex);
 				cnt--;
 
@@ -374,6 +465,22 @@ void *sub_worker(void *threadid)
 				free(test_job);
 			}
 		}
+#else
+		for(i = 0;i < cnt;i++){
+			job = jobq[i]; 
+			pthread_mutex_lock(&th_info[tid].mutex);
+			//	th_info[tid].active_count--;
+			th_info[tid].latency_sum += time_since(&job->start_time, &job->stop_time);
+			th_info[tid].latency_count ++;
+			//if(th_info[i].queue_count)
+			//	printf(" wait ... qcount = %d\n", th_info[i].queue_count);
+			pthread_mutex_unlock(&th_info[tid].mutex);
+			cnt--;
+
+			free(job->buf);
+			free(job);
+		}
+#endif 
 	}
 
 	printf (" pthread end id = %d \n", (int)tid);
@@ -382,41 +489,52 @@ void *sub_worker(void *threadid)
 	return NULL;
 }
 
+#endif 
+
 void main_worker(){
 	struct io_job *job;
-	int i, j;
+	int i, j, k;
 
-	for(j = 0;j < 256*64;j++){
+	for(j = 0;j < 4*256*64;j++){
 		for (i=0; i<nr_thread; i++) {
+			unsigned long page;
+
 			pthread_mutex_lock(&th_info[i].mutex);
 
-			unsigned long page;
-			job = (struct io_job *)malloc(sizeof(struct io_job));
-
-			page = RND(th_info[i].total_pages);
-			job->offset = (long long)page * PAGE_SIZE;
-			job->bytes = PAGE_SIZE;
-			job->rw = 0;
-
-			job->buf = allocate_aligned_buffer(job->bytes);
-			gettimeofday(&job->start_time, NULL);
-			flist_add_tail(&job->list, &th_info[i].queue);
-			th_info[i].queue_count++;
-
-			total_bytes += job->bytes;
-
-			if(th_info[i].queue_count>=MAX_QDEPTH)
-				pthread_cond_signal(&th_info[i].cond_sub);
-
 			while(th_info[i].queue_count>=MAX_QDEPTH){
-				//printf(" wait ... qcount = %d\n", th_info[i].queue_count);
+			//	printf(" wait ... qcount = %d\n", th_info[i].queue_count);
 				pthread_cond_wait(&th_info[i].cond_main, &th_info[i].mutex);
 			}
-			pthread_cond_signal(&th_info[i].cond_sub);
+
+			for(k = 0;k < 1;k++){
+				job = (struct io_job *)malloc(sizeof(struct io_job));
+
+				page = RND(th_info[i].total_pages);
+				job->offset = (long long)page * PAGE_SIZE;
+				job->bytes = PAGE_SIZE;
+				job->rw = 0;
+				job->buf = allocate_aligned_buffer(job->bytes);
+
+				//gettimeofday(&job->start_time, NULL);
+				flist_add_tail(&job->list, &th_info[i].queue);
+				th_info[i].queue_count++;
+
+				pthread_spin_lock(&spinlock);
+				total_bytes += job->bytes;
+				pthread_spin_unlock(&spinlock);
+			}
+
+
+		//	if(th_info[i].queue_count>=MAX_QDEPTH)
+			//printf(" qcount = %d\n", th_info[i].queue_count);
+
+
 			pthread_mutex_unlock(&th_info[i].mutex);
+			pthread_cond_signal(&th_info[i].cond_sub);
 
 		}
 	}
+	printf(" finish main worker .. \n");
 }
 
 int main(int argc, char **argv){
