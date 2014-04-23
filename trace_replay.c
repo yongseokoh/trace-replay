@@ -96,10 +96,12 @@ void *allocate_aligned_buffer(size_t size)
 {
 	void *p;
 
-#if 0  
+#if 0 
 	posix_memalign(&p, getpagesize(), size);
 #else
 	p=(void *)memalign(getpagesize(), size);
+	//p = malloc(size);
+
 #endif
 
 	if(!p) {
@@ -150,6 +152,14 @@ void align_sector(struct thread_info_t *t_info, int *blkno, int *bcount){
 	}
 
 	*blkno = pageno * SPP;
+#if 0
+	*bcount=SPP;
+	*blkno = 0;
+#endif 
+#if 0
+	*bcount=SPP;
+	*blkno = RND(t_info->total_pages)*SPP;
+#endif 
 }
 
 void update_iostat(struct thread_info_t *t_info, struct io_job *job){
@@ -181,7 +191,8 @@ void make_jobs(struct thread_info_t *t_info){
 //	while(!feof(t_info->trace_fp)){
 	for(i = 0;i < t_info->queue_depth;i++){
 		unsigned long page;
-		job = (struct io_job *)malloc(sizeof(struct io_job));
+		//job = (struct io_job *)malloc(sizeof(struct io_job));
+		job = t_info->th_jobs[i];
 
 		if (fgets(line, 200, t_info->trace_fp) == NULL) {
 			//printf(" fges error \n");
@@ -199,6 +210,9 @@ void make_jobs(struct thread_info_t *t_info){
 //		printf( "%lf %d %d %d %x\n", arrival_time, devno, blkno, bcount, flags);
 		job->offset = (long long)blkno * SECTOR_SIZE;
 		job->bytes = (size_t)bcount * SECTOR_SIZE;
+		if(job->bytes>(size_t)MAX_BYTES)
+			job->bytes = MAX_BYTES;
+
 		if(flags)
 			job->rw = 1;
 		else
@@ -209,13 +223,39 @@ void make_jobs(struct thread_info_t *t_info){
 		job->bytes = PAGE_SIZE;
 		job->rw = 0;
 #endif 
-		job->buf = allocate_aligned_buffer(job->bytes);
+		//job->buf = allocate_aligned_buffer(job->bytes);
+		job->buf = t_info->th_buf[i];
 
 		gettimeofday(&job->start_time, NULL);
 		flist_add_tail(&job->list, &t_info->queue);
 		t_info->queue_count++;
 
 	}
+}
+
+int  remove_ioq(struct thread_info_t *t_info, struct iocb **ioq){
+	struct flist_head *ptr, *tmp;
+	struct io_job *job;
+	int cnt = 0;
+
+	flist_for_each_safe(ptr, tmp, &t_info->queue){
+		job = flist_entry(ptr, struct io_job, list);
+		flist_del(&job->list);
+		ioq[cnt] = &job->iocb;
+
+		//if(job->rw)
+		//	io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+		//else
+		//	io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+
+		//cnt++;
+		t_info->queue_count--;
+
+		//free(job->buf);
+		//free(job);
+	}
+
+	return cnt;
 }
 
 int  make_ioq(struct thread_info_t *t_info, struct iocb **ioq){
@@ -247,16 +287,19 @@ void wait_completion(struct thread_info_t *t_info, int cnt){
 
 	while(cnt){
 		complete_count = io_getevents(t_info->io_ctx, 1, cnt, t_info->events, NULL);
+		if(complete_count < 0){
+			printf(" io error \n");
+		}
 		for(i = 0;i < complete_count;i++){
 			job = (struct io_job *)((unsigned long)t_info->events[i].obj);
-	//		printf(" tid = %d,no = %d blkno = %d, bytes = %d, lat = %f\n",
-	//				(int) t_info->tid, i, (int)job->offset, (int)job->bytes,
-	//			time_since(&job->start_time, &job->stop_time));
+			//printf(" tid = %d,no = %d blkno = %d, bytes = %d, lat = %f\n",
+			//		(int) t_info->tid, i, (int)job->offset, (int)job->bytes,
+			//	time_since(&job->start_time, &job->stop_time));
 
 			update_iostat(t_info, job);
 
-			free(job->buf);
-			free(job);
+		//	free(job->buf);
+		//	free(job);
 		}
 		cnt-=complete_count;
 	}
@@ -281,6 +324,7 @@ void *sub_worker(void *threadid)
 	while(1){
 		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
 		make_jobs(t_info);
+#if 1
 		cnt = make_ioq(t_info, ioq);
 		if(!cnt)
 			continue;
@@ -290,6 +334,11 @@ void *sub_worker(void *threadid)
 			io_error("io_submit", rc);
 
 		wait_completion(t_info, cnt);
+#else
+
+		remove_ioq(t_info, ioq);
+#endif 
+
 		iter++;
 		if(iter>100){
 			gettimeofday(&io_stat->end_time, NULL);
@@ -387,6 +436,7 @@ int main(int argc, char **argv){
 	int qdepth ;
 	double timeout;
 	FILE *result_fp;
+	int i;
 
 	nr_thread = argc - argc_offset;
 
@@ -452,6 +502,11 @@ int main(int argc, char **argv){
 		t_info->active_count = 0;
 		memset(&t_info->io_stat, 0x00, sizeof(struct io_stat_t));
 
+		for(i=0;i<qdepth;i++){
+			t_info->th_buf[i] = allocate_aligned_buffer(MAX_BYTES);
+			t_info->th_jobs[i] = malloc(sizeof(struct io_job));
+		}
+
 		ioctl(t_info->fd, BLKGETSIZE64, &t_info->total_capacity);
 		t_info->total_pages = t_info->total_capacity/PAGE_SIZE; 
 		t_info->total_pages = t_info->total_pages/nr_thread;
@@ -507,6 +562,11 @@ int main(int argc, char **argv){
 
 		fclose(th_info[t].trace_fp);
 		disk_close(th_info[t].fd);
+
+		for(i=0;i<qdepth;i++){
+			free(th_info[t].th_buf[i]); 
+			free(th_info[t].th_jobs[i]); 
+		}
 	}
 
 

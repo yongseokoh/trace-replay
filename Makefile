@@ -17,7 +17,7 @@ OBJS=$(SRCS:.c=.o)
 .c.o:
 	@echo "Compiling $< ..."
 	@$(RM) $@
-	$(CC) -c -O2 -g  -D_GNU_SOURCE $(CFLAGS) -lrt -o $@ $<
+	$(CC) -c -O2 -g  -D_GNU_SOURCE $(CFLAGS) -o $@ $<
 #$(CC) -c -O2 -D_GNU_SOURCE $(CFLAGS) -o $@ $<
 
 $(TARGET):     $(OBJS)

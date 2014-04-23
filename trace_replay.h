@@ -16,6 +16,7 @@
 #define PAGE_SIZE 4096
 #define SECTOR_SIZE 512
 #define SPP (PAGE_SIZE/SECTOR_SIZE)
+#define MAX_BYTES (4*1024*1024)
 
 struct io_stat_t{
 	double latency_sum;
@@ -44,6 +45,9 @@ struct thread_info_t{
 	int queue_depth;
 	int queue_count;
 	int active_count;
+
+	struct io_job *th_jobs[MAX_QDEPTH];
+	void *th_buf[MAX_QDEPTH];
 
 	int fd;
 	long long total_capacity;
