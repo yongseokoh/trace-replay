@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <libaio.h>
 #include <errno.h>
+#include <signal.h>
 
 #include <sys/mount.h>
 #include <sys/types.h>
@@ -17,6 +18,7 @@
 #include "flist.h"
 #include "trace_replay.h"
 
+FILE *result_fp;
 struct thread_info_t th_info[MAX_THREADS];
 int nr_thread;
 pthread_spinlock_t spinlock;
@@ -178,7 +180,7 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 }
 
 
-void make_jobs(struct thread_info_t *t_info){
+int make_jobs(struct thread_info_t *t_info){
 	struct io_job *job;
 	char line[201];
 	double arrival_time;
@@ -196,12 +198,12 @@ void make_jobs(struct thread_info_t *t_info){
 
 		if (fgets(line, 200, t_info->trace_fp) == NULL) {
 			//printf(" fges error \n");
-			return;
+			return -1;
 		}
 		if (sscanf(line, "%lf %d %d %d %x\n", &arrival_time, &devno, &blkno, &bcount, &flags) != 5) {
 			fprintf(stderr, "Wrong number of arguments for I/O trace event type\n");
 			fprintf(stderr, "line: %s", line);
-			return;
+			return -1;
 		}
 
 //		printf( "%lf %d %d %d %x\n", arrival_time, devno, blkno, bcount, flags);
@@ -231,6 +233,7 @@ void make_jobs(struct thread_info_t *t_info){
 		t_info->queue_count++;
 
 	}
+	return 0;
 }
 
 int  remove_ioq(struct thread_info_t *t_info, struct iocb **ioq){
@@ -318,12 +321,15 @@ void *sub_worker(void *threadid)
 	int cnt = 0;
 
 	//printf (" pthread start id = %d \n", (int)tid);
+	printf(" Starting trace replayer ... %s\n", t_info->tracename);
 
 	gettimeofday(&io_stat->start_time, NULL);
 
 	while(1){
 		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
-		make_jobs(t_info);
+		rc = make_jobs(t_info);
+		if(rc<0)
+			goto check_timeout;
 #if 1
 		cnt = make_ioq(t_info, ioq);
 		if(!cnt)
@@ -347,6 +353,8 @@ void *sub_worker(void *threadid)
 				goto Timeout;
 			}
 		}
+
+check_timeout:
 
 		if(feof(t_info->trace_fp)){
 			if(t_info->timeout && io_stat->execution_time < t_info->timeout){
@@ -373,6 +381,7 @@ Timeout:
 
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
+	printf(" Finalizing trace replayer ... %s\n", t_info->tracename);
 
 	//printf (" pthread end id = %d \n", (int)tid);
 
@@ -436,6 +445,20 @@ void usage_help(){
 	printf(" #./trace_replay 32 result.txt 60 /dev/sdb1 trace.dat trace.dat\n\n");
 }
 
+void sig_handler(int signum)
+{
+	printf("Received signal %d\n", signum);
+
+	gettimeofday(&tv_end, NULL);
+	timeval_subtract(&tv_result, &tv_end, &tv_start);
+	execution_time = time_since(&tv_start, &tv_end);
+
+	//print_result(nr_thread, stdout);
+	print_result(nr_thread, result_fp);
+
+	fclose(result_fp);
+}
+
 int main(int argc, char **argv){
 	pthread_t threads[MAX_THREADS];
 	pthread_attr_t attr;
@@ -445,7 +468,6 @@ int main(int argc, char **argv){
 	int argc_offset = ARG_TRACE;
 	int qdepth ;
 	double timeout;
-	FILE *result_fp;
 	int i;
 
 	nr_thread = argc - argc_offset;
@@ -474,7 +496,7 @@ int main(int argc, char **argv){
 		return -1;
 	}
 
-	fprintf(stdout, "Starting Trace Replayer \n");
+	fprintf(stdout, " Starting Trace Replayer \n");
 	fprintf(result_fp, " Q depth = %d \n", qdepth);
 	fprintf(result_fp, " Timeout = %.2f seconds \n", timeout); 
 	fprintf(result_fp, " No of threads = %d \n", nr_thread);
@@ -553,6 +575,7 @@ int main(int argc, char **argv){
 	printf(" use main worker ... \n");
 	main_worker();
 #endif 
+	signal(SIGINT, sig_handler);
 
 //	sleep(10);
 
