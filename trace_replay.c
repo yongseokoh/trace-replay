@@ -350,9 +350,19 @@ void *sub_worker(void *threadid)
 
 		if(feof(t_info->trace_fp)){
 			if(t_info->timeout && io_stat->execution_time < t_info->timeout){
+#if 0 
 				fseek(t_info->trace_fp, 0, SEEK_SET);
+#else
+
+				fclose(t_info->trace_fp);
+				t_info->trace_fp = fopen(t_info->tracename, "r");
+				if(t_info->trace_fp == NULL){
+					printf("file open error %s\n", t_info->tracename);
+					exit(0);
+				}
+#endif 
 				io_stat->trace_repeat_count++;
-				//printf(" reset trace file ... \n");
+				printf(" repeat trace file ... %s\n", t_info->tracename);
 			}else{
 				goto Timeout;
 			}
@@ -423,7 +433,7 @@ void usage_help(){
 	printf("\n Invalid command!!\n");
 	printf(" Usage:\n");
 	printf(" #./trace_replay qdepth output timeout devicefile tracefile1 tracefile2\n");
-	printf(" #./trace_replace 32 result.txt 60 /dev/sdb1 trace.dat trace.dat\n\n");
+	printf(" #./trace_replay 32 result.txt 60 /dev/sdb1 trace.dat trace.dat\n\n");
 }
 
 int main(int argc, char **argv){
@@ -464,6 +474,7 @@ int main(int argc, char **argv){
 		return -1;
 	}
 
+	fprintf(stdout, "Starting Trace Replayer \n");
 	fprintf(result_fp, " Q depth = %d \n", qdepth);
 	fprintf(result_fp, " Timeout = %.2f seconds \n", timeout); 
 	fprintf(result_fp, " No of threads = %d \n", nr_thread);
@@ -483,7 +494,7 @@ int main(int argc, char **argv){
 		strcpy(t_info->filename, argv[ARG_DEV]);
 		fprintf(result_fp, " %d thread using %s trace \n", (int)t, t_info->filename);
 
-		open_flags = O_RDWR|O_DIRECT;
+		open_flags = O_RDWR|O_DIRECT|O_SYNC;
 		//open_flags = O_RDWR|O_SYNC;
 		t_info->fd =disk_open(t_info->filename, open_flags); 
 		if(t_info->fd < 0)
@@ -587,6 +598,8 @@ int main(int argc, char **argv){
 //			(double)total_wbytes/(1024*1024)
 //			);
 	//printf("Total: error %f MB\n", (double)total_error_bytes/(1024*1024));
+
+	fprintf(stdout, "Finalizing Trace Replayer \n");
 
 	return 0;
 }
