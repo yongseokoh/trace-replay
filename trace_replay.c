@@ -321,19 +321,22 @@ void *sub_worker(void *threadid)
 	int cnt = 0;
 
 	//printf (" pthread start id = %d \n", (int)tid);
-	printf(" Starting trace replayer ... %s\n", t_info->tracename);
+	printf(" Starting thread %d ... %s\n", (int)tid, t_info->tracename);
 
 	gettimeofday(&io_stat->start_time, NULL);
 
 	while(1){
 		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
 		rc = make_jobs(t_info);
-		if(rc<0)
-			goto check_timeout;
+		//if(rc<0)
+		//	goto check_timeout;
 #if 1
 		cnt = make_ioq(t_info, ioq);
-		if(!cnt)
-			continue;
+		if(!cnt){
+		//	continue;
+			if(feof(t_info->trace_fp))
+				goto check_timeout;
+		}
 		
 		rc = io_submit(t_info->io_ctx, cnt, ioq);
 		if (rc < 0)
@@ -370,7 +373,7 @@ check_timeout:
 				}
 #endif 
 				io_stat->trace_repeat_count++;
-				printf(" repeat trace file ... %s\n", t_info->tracename);
+				printf(" repeat trace file thread %d ... %s\n", (int)tid, t_info->tracename);
 			}else{
 				goto Timeout;
 			}
@@ -381,7 +384,7 @@ Timeout:
 
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
-	printf(" Finalizing trace replayer ... %s\n", t_info->tracename);
+	printf(" Finalizing thread %d ... %s\n", (int)tid, t_info->tracename);
 
 	//printf (" pthread end id = %d \n", (int)tid);
 
@@ -445,18 +448,25 @@ void usage_help(){
 	printf(" #./trace_replay 32 result.txt 60 /dev/sdb1 trace.dat trace.dat\n\n");
 }
 
-void sig_handler(int signum)
-{
-	printf("Received signal %d\n", signum);
-
+void finalize(){
 	gettimeofday(&tv_end, NULL);
 	timeval_subtract(&tv_result, &tv_end, &tv_start);
 	execution_time = time_since(&tv_start, &tv_end);
 
 	//print_result(nr_thread, stdout);
 	print_result(nr_thread, result_fp);
-
 	fclose(result_fp);
+	fprintf(stdout, " Finalizing Trace Replayer \n");
+}
+
+void sig_handler(int signum)
+{
+	printf("Received signal %d\n", signum);
+
+	finalize();
+
+	signal( SIGINT, SIG_DFL);
+	exit(0);
 }
 
 int main(int argc, char **argv){
@@ -603,26 +613,7 @@ int main(int argc, char **argv){
 		}
 	}
 
-
-	gettimeofday(&tv_end, NULL);
-	timeval_subtract(&tv_result, &tv_end, &tv_start);
-	execution_time = time_since(&tv_start, &tv_end);
-
-	//print_result(nr_thread, stdout);
-	print_result(nr_thread, result_fp);
-
-	fclose(result_fp);
-
-//	printf("Total: %llu operations \n", total_operations);
-//	printf("Total: %f iops\n", (double)total_operations/tv_to_sec(&tv_result));
-//	printf("Total: %f MB/s\n", (double)total_bytes/(1024*1024)/tv_to_sec(&tv_result));
-//	printf("Total: %f MB, read %f MB, write %f \n", (double)total_bytes/(1024*1024), 
-//			(double)total_rbytes/(1024*1024),
-//			(double)total_wbytes/(1024*1024)
-//			);
-	//printf("Total: error %f MB\n", (double)total_error_bytes/(1024*1024));
-
-	fprintf(stdout, "Finalizing Trace Replayer \n");
+	finalize();
 
 	return 0;
 }
