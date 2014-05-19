@@ -20,6 +20,8 @@
 
 FILE *result_fp;
 struct thread_info_t th_info[MAX_THREADS];
+int cnt=0;
+int cnt2=0;
 int nr_thread;
 pthread_spinlock_t spinlock;
 struct timeval tv_start, tv_end, tv_result;
@@ -179,6 +181,28 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 		io_stat->total_wbytes += job->bytes;
 }
 
+struct simple_bio {
+	int devno;
+	int blkno;
+	int bcount;
+	int flags;
+};
+
+int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* flags, struct thread_info_t *t_info){
+	struct trace_io_req* io;
+	if(t_info->trace_io_cnt<=t_info->trace_io_cur)
+		return -1;
+	
+	io = &(t_info->trace_buf[t_info->trace_io_cur]);
+	*arrival_time = io->arrival_time;
+	*devno = io->devno;
+	*bcount = io->bcount;
+	*blkno = io->blkno;
+	*flags = io->flags;
+
+	t_info->trace_io_cur++;
+	return 0;
+}
 
 int make_jobs(struct thread_info_t *t_info){
 	struct io_job *job;
@@ -188,25 +212,60 @@ int make_jobs(struct thread_info_t *t_info){
 	int blkno;
 	int bcount;
 	int flags;
-	int i;
-
+	int i,j;
+	struct io_stat_t *io_stat = &th_info[0].io_stat;
+	struct simple_bio bio[128];
+	int sb_cnt = 0;
+	int temp,temp2;
 //	while(!feof(t_info->trace_fp)){
 	for(i = 0;i < t_info->queue_depth;i++){
 		unsigned long page;
 		//job = (struct io_job *)malloc(sizeof(struct io_job));
 		job = t_info->th_jobs[i];
-
+		
+		if(trace_io_get(&arrival_time, &devno, &blkno, &bcount, &flags, t_info)){
+			return -1;
+		}
+		/*
 		if (fgets(line, 200, t_info->trace_fp) == NULL) {
 			//printf(" fges error \n");
 			return -1;
 		}
+		
 		if (sscanf(line, "%lf %d %d %d %x\n", &arrival_time, &devno, &blkno, &bcount, &flags) != 5) {
 			fprintf(stderr, "Wrong number of arguments for I/O trace event type\n");
 			fprintf(stderr, "line: %s", line);
 			return -1;
 		}
+		*/
+		cnt++;
+		if(cnt % 100 == 0 && io_stat->latency_count>0 && io_stat->execution_time>0)
+		{
 
-//		printf( "%lf %d %d %d %x\n", arrival_time, devno, blkno, bcount, flags);
+			printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
+		}
+	
+		/*
+		bcount=8;
+		if(cnt % 10 == 0){
+			if(cnt2 == 0)
+			{
+				cnt2 = 1;
+				cnt -= 10;
+			}
+
+			else if(cnt2 ==1)
+			{
+				cnt -= 10;
+				cnt2++;
+			}
+			else
+				cnt2=0;
+		}
+		blkno = cnt*1000;
+		*/
+
+
 #if 1
 		align_sector(t_info, &blkno, &bcount);
 //		printf( "%lf %d %d %d %x\n", arrival_time, devno, blkno, bcount, flags);
@@ -224,7 +283,46 @@ int make_jobs(struct thread_info_t *t_info){
 		job->offset = (long long)page * PAGE_SIZE;
 		job->bytes = PAGE_SIZE;
 		job->rw = 0;
-#endif 
+#endif
+		bio[i].bcount = bcount;
+		bio[i].blkno = blkno;
+		bio[i].devno = devno;
+		bio[i].flags = flags;
+		
+
+		for( j=0; j<i; j++ ){
+			if( bio[i].devno == bio[j].devno ) {
+	
+				if(bio[i].flags == bio[j].flags
+				&& (bio[i].blkno == ( bio[j].blkno + bio[j].bcount - 8))) {
+					blkno += 8;
+					bcount -= 8;
+			
+					if(bcount <= 0)
+					{
+						t_info->trace_io_cur--;
+						return 0;
+					}
+					job->offset = (long long)blkno * SECTOR_SIZE;
+					job->bytes = (size_t)bcount * SECTOR_SIZE;
+					goto out;
+					
+				}
+				temp =  bio[i].blkno - ( bio[j].blkno + bio[j].bcount -1);
+				temp2 =   ((bio[i].blkno + bio[i].bcount - 1) - bio[j].blkno) ;
+				
+				temp = (temp > 0) ? 1 : -1;
+				temp2 = (temp2 > 0) ? 1 : -1;
+
+				if( temp * temp2 < 0) {
+					t_info->trace_io_cur--;
+					return 0;
+				}
+			}
+			
+		}
+out:
+		//printf( "%d: %lf %d %d %d %x\n", i, arrival_time, devno, blkno, bcount, flags);
 		//job->buf = allocate_aligned_buffer(job->bytes);
 		job->buf = t_info->th_buf[i];
 
@@ -334,7 +432,11 @@ void *sub_worker(void *threadid)
 		cnt = make_ioq(t_info, ioq);
 		if(!cnt){
 		//	continue;
+			/*
 			if(feof(t_info->trace_fp))
+				goto check_timeout;
+			*/
+			if(t_info->trace_io_cur >= t_info->trace_io_cnt)
 				goto check_timeout;
 		}
 		
@@ -359,18 +461,20 @@ void *sub_worker(void *threadid)
 
 check_timeout:
 
-		if(feof(t_info->trace_fp)){
+		//if(feof(t_info->trace_fp)){
+		if(t_info->trace_io_cur >= t_info->trace_io_cnt){
 			if(t_info->timeout && io_stat->execution_time < t_info->timeout){
 #if 0 
 				fseek(t_info->trace_fp, 0, SEEK_SET);
 #else
-
+				/*
 				fclose(t_info->trace_fp);
 				t_info->trace_fp = fopen(t_info->tracename, "r");
 				if(t_info->trace_fp == NULL){
 					printf("file open error %s\n", t_info->tracename);
 					exit(0);
 				}
+				*/
 #endif 
 				io_stat->trace_repeat_count++;
 				printf(" repeat trace file thread %d ... %s\n", (int)tid, t_info->tracename);
@@ -469,6 +573,25 @@ void sig_handler(int signum)
 	exit(0);
 }
 
+
+
+int trace_io_put(char* line, struct thread_info_t* t_info){
+	struct trace_io_req* io;	
+	if(t_info->trace_buf_size <= t_info->trace_io_cnt){
+		t_info->trace_buf_size *=2;
+		t_info->trace_buf = realloc(t_info->trace_buf, sizeof(struct trace_io_req) * t_info->trace_buf_size);
+	}
+	io = &(t_info->trace_buf[t_info->trace_io_cnt]);
+
+	if (sscanf(line, "%lf %d %d %d %x\n", &(io->arrival_time), &(io->devno), &(io->blkno), &(io->bcount), &(io->flags)) != 5) {
+		fprintf(stderr, "Wrong number of arguments for I/O trace event type\n");
+		fprintf(stderr, "line: %s", line);
+		return -1;
+	}
+	t_info->trace_io_cnt++;
+	return 0;
+}
+
 int main(int argc, char **argv){
 	pthread_t threads[MAX_THREADS];
 	pthread_attr_t attr;
@@ -479,6 +602,7 @@ int main(int argc, char **argv){
 	int qdepth ;
 	double timeout;
 	int i;
+	char line[201];
 
 	nr_thread = argc - argc_offset;
 
@@ -516,12 +640,28 @@ int main(int argc, char **argv){
 	for(t=0;t<nr_thread;t++){
 		struct thread_info_t *t_info = &th_info[t];
 		int fd;
+		
+		t_info->trace_buf_size = 1024;		
+		t_info->trace_buf = malloc(sizeof(struct trace_io_req) * 1024);
 
+
+
+		t_info->trace_io_cnt = 0;
+		t_info->trace_io_cur = 0;
 		t_info->trace_fp = fopen(argv[argc_offset+t], "r");
 		if(t_info->trace_fp == NULL){
 			printf("file open error %s\n", argv[argc_offset+t]);
 			return -1;
 		}
+		while(1){
+			if (fgets(line, 200, t_info->trace_fp) == NULL) {
+				break;
+			}
+			if(trace_io_put(line, t_info))
+				continue;
+		}
+
+
 		strcpy(t_info->tracename, argv[argc_offset+t]);
 		strcpy(t_info->filename, argv[ARG_DEV]);
 		fprintf(result_fp, " %d thread using %s trace \n", (int)t, t_info->filename);

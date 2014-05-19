@@ -31,6 +31,17 @@ struct io_stat_t{
 	int trace_repeat_count;
 };
 
+struct trace_io_req{
+#if 0
+	char line[201];
+#else
+	double arrival_time;
+	int devno;
+	int blkno;
+	int bcount;
+	int flags;
+#endif
+};
 struct thread_info_t{
 	int tid;
 
@@ -58,6 +69,10 @@ struct thread_info_t{
 	double timeout;
 
 	FILE *trace_fp;
+	int trace_buf_size;
+	struct trace_io_req *trace_buf;
+	int trace_io_cnt;
+	int trace_io_cur;
 	char filename[STR_SIZE];
 	char tracename[STR_SIZE];
 
