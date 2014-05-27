@@ -42,6 +42,29 @@ struct trace_io_req{
 	int flags;
 #endif
 };
+
+struct trace_info_t{
+
+	pthread_spinlock_t trace_lock;
+	FILE *trace_fp;
+	int trace_buf_size;
+	struct trace_io_req *trace_buf;
+	int trace_io_cnt;
+	int trace_io_cur;
+	char tracename[STR_SIZE];
+	char filename[STR_SIZE];
+	int fd;
+
+	long long total_capacity;
+	long long total_pages;
+	long long total_sectors;
+	long long start_partition;
+	long long start_page;
+	double timeout;
+
+};
+
+
 struct thread_info_t{
 	int tid;
 
@@ -51,7 +74,6 @@ struct thread_info_t{
 	io_context_t io_ctx;
 	struct io_event events[MAX_QDEPTH];
 
-	struct io_stat_t io_stat;
 
 	int queue_depth;
 	int queue_count;
@@ -60,21 +82,9 @@ struct thread_info_t{
 	struct io_job *th_jobs[MAX_QDEPTH];
 	void *th_buf[MAX_QDEPTH];
 
-	int fd;
-	long long total_capacity;
-	long long total_pages;
-	long long total_sectors;
-	long long start_partition;
-	long long start_page;
-	double timeout;
+	struct io_stat_t io_stat;
 
-	FILE *trace_fp;
-	int trace_buf_size;
-	struct trace_io_req *trace_buf;
-	int trace_io_cnt;
-	int trace_io_cur;
-	char filename[STR_SIZE];
-	char tracename[STR_SIZE];
+	struct trace_info_t *trace;
 
 	int done;
 };
