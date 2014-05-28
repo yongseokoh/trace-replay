@@ -620,8 +620,10 @@ void sig_handler(int signum)
 
 
 
-int trace_io_put(char* line, struct trace_info_t* trace){
+int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 	struct trace_io_req* io;	
+	int start;
+	int i, j;
 	if(trace->trace_buf_size <= trace->trace_io_cnt){
 		trace->trace_buf_size *=2;
 		trace->trace_buf = realloc(trace->trace_buf, sizeof(struct trace_io_req) * trace->trace_buf_size);
@@ -633,6 +635,28 @@ int trace_io_put(char* line, struct trace_info_t* trace){
 		fprintf(stderr, "line: %s", line);
 		return -1;
 	}
+
+	i = trace->trace_io_cnt;
+	start = (trace->trace_io_cnt - qdepth > 0)? trace->trace_io_cnt - qdepth : 0;
+	for( j = start; j<i; j++ ){
+		if( (trace->trace_buf[i]).devno ==  (trace->trace_buf[j]).devno ) {
+
+			if( (trace->trace_buf[i]).flags ==  (trace->trace_buf[j]).flags
+					&& ( (trace->trace_buf[i]).blkno == (  (trace->trace_buf[j]).blkno +  (trace->trace_buf[j]).bcount - 8))) {
+				
+				if( (trace->trace_buf[i]).bcount >= 8) {
+
+					(trace->trace_buf[i]).blkno += 8;
+					(trace->trace_buf[i]).bcount -= 8;
+					break;
+				}
+
+
+			}
+		}
+	}
+
+
 	trace->trace_io_cnt++;
 	return 0;
 }
@@ -712,7 +736,7 @@ int main(int argc, char **argv){
 			if (fgets(line, 200, trace->trace_fp) == NULL) {
 				break;
 			}
-			if(trace_io_put(line, trace))
+			if(trace_io_put(line, trace, qdepth))
 				continue;
 		}
 
