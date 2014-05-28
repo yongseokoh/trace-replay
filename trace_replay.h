@@ -79,6 +79,7 @@ struct thread_info_t{
 	int queue_depth;
 	int queue_count;
 	int active_count;
+	int fd;
 
 	struct io_job *th_jobs[MAX_QDEPTH];
 	void *th_buf[MAX_QDEPTH];

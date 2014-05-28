@@ -409,9 +409,9 @@ int  make_ioq(struct thread_info_t *t_info, struct iocb **ioq){
 		ioq[cnt] = &job->iocb;
 
 		if(job->rw)
-			io_prep_pread(&job->iocb, trace->fd, job->buf, job->bytes, job->offset);
+			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 		else
-			io_prep_pwrite(&job->iocb, trace->fd, job->buf, job->bytes, job->offset);
+			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 
 		cnt++;
 		t_info->queue_count--;
@@ -426,9 +426,10 @@ void wait_completion(struct thread_info_t *t_info, int cnt){
 	int i;
 
 	while(cnt){
-		complete_count = io_getevents(t_info->io_ctx, 1, cnt, t_info->events, NULL);
+		complete_count = io_getevents(t_info->io_ctx, cnt, cnt, t_info->events, NULL);
 		if(complete_count < 0){
-			printf(" io error \n");
+	//		printf(" io error \n");
+			continue;
 		}
 		for(i = 0;i < complete_count;i++){
 			job = (struct io_job *)((unsigned long)t_info->events[i].obj);
@@ -815,8 +816,7 @@ int main(int argc, char **argv){
 		strcpy(trace->filename, argv[ARG_DEV]);
 		fprintf(result_fp, " %d thread using %s trace \n", (int)i, trace->filename);
 
-		open_flags = O_RDWR|O_DIRECT|O_SYNC;
-		//open_flags = O_RDWR|O_SYNC;
+		open_flags = O_RDWR|O_DIRECT;
 		trace->fd =disk_open(trace->filename, open_flags); 
 		if(trace->fd < 0)
 			return -1;
@@ -858,6 +858,12 @@ int main(int argc, char **argv){
 		t_info->active_count = 0;
 		t_info->done = 0;
 
+
+		open_flags = O_RDWR|O_DIRECT;
+		t_info->fd =disk_open(trace->filename, open_flags); 
+		if(t_info->fd < 0)
+			return -1;
+
 		for(i=0;i<qdepth;i++){
 			t_info->th_buf[i] = allocate_aligned_buffer(MAX_BYTES);
 			t_info->th_jobs[i] = malloc(sizeof(struct io_job));
@@ -884,9 +890,10 @@ int main(int argc, char **argv){
 	//pthread_spin_init(&spinlock, 0);
 	gettimeofday(&tv_start, NULL);
 
+	signal(SIGINT, sig_handler);
+
 	main_worker();
 
-	signal(SIGINT, sig_handler);
 
 	for(t=0;t<nr_thread;t++){
 		struct trace_info_t *trace = th_info[t].trace;
@@ -909,6 +916,7 @@ int main(int argc, char **argv){
 			free(th_info[t].th_buf[i]); 
 			free(th_info[t].th_jobs[i]); 
 		}
+		disk_close(th_info[t].fd);
 	}
 
 	for(t=0;t<nr_trace;t++){
