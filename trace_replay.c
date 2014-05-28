@@ -28,6 +28,7 @@ int nr_trace;
 //pthread_spinlock_t spinlock;
 struct timeval tv_start, tv_end, tv_result;
 double execution_time = 0.0;
+double timeout;
 unsigned long genrand();
 #define RND(x) ((x>0)?(genrand() % (x)):0)
 
@@ -534,9 +535,12 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 	unsigned long long latency_count;
 	int per_thread = nr_thread / nr_trace;
 	int i, j;
+	double progress_percent = 0.0;
+	double temp_percent = 0.0;
 	
 	for(i = 0;i < nr_trace;i++){
 		struct io_stat_t io_stat_dst;
+		struct trace_info_t *trace = &traces[i];
 		unsigned long long bytes = 0;
 		unsigned long long rbytes = 0;
 		unsigned long long wbytes = 0;
@@ -585,6 +589,12 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		total_ios += io_stat_dst.latency_count;
 		latency_sum += io_stat_dst.latency_sum;
 
+		
+		pthread_spin_lock(&trace->trace_lock);
+		temp_percent = (double)trace->trace_io_cur*100/trace->trace_io_cnt;
+		pthread_spin_unlock(&trace->trace_lock);
+		if(temp_percent>progress_percent)
+			progress_percent = temp_percent;
 	}
 
 	if(detail){
@@ -600,10 +610,17 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		fflush(fp);
 	}else{
 		gettimeofday(&tv_end, NULL);
-		//timeval_subtract(&tv_result, &tv_end, &tv_start);
 		execution_time = time_since(&tv_start, &tv_end);
-		printf("time = %fs, bandwidth = %fMB/s Latency = %fus          \r", execution_time/1000000,
-				(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
+		if(timeout){
+			printf("time = %fs (remaining = %fs) bandwidth = %fMB/s Latency = %fus          \r",
+					execution_time, execution_time-timeout,
+					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
+		}else{
+			printf("time = %.2fs (remaining = %.2fs %.0f%%) bandwidth = %fMB/s Latency = %fus          \r",
+					execution_time, execution_time/progress_percent*100, progress_percent,
+					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
+
+		}
 		//printf(" %f %llu\n", execution_time, total_bytes);
 		fflush(fp);
 	}
@@ -726,7 +743,6 @@ int main(int argc, char **argv){
 	int argc_offset = ARG_TRACE;
 	int qdepth ;
 	int per_thread;
-	double timeout;
 	char line[201];
 
 	nr_trace = argc - argc_offset;
