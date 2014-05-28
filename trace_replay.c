@@ -615,7 +615,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
 		}else{
 			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.3fs          \r",
-					execution_time, execution_time/progress_percent*100, (double)100-progress_percent,
+					execution_time, execution_time/progress_percent*100-execution_time, (double)100-progress_percent,
 					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
 
 		}
