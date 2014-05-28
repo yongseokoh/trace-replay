@@ -196,9 +196,7 @@ struct simple_bio {
 };
 
 void trace_reset(struct trace_info_t *trace){
-	pthread_spin_lock(&trace->trace_lock);
 	trace->trace_io_cur = 0;
-	pthread_spin_unlock(&trace->trace_lock);
 }
 
 int trace_eof(struct trace_info_t *trace){
@@ -207,11 +205,9 @@ int trace_eof(struct trace_info_t *trace){
 	pthread_spin_lock(&trace->trace_lock);
 	if(trace->trace_io_cur>=trace->trace_io_cnt){
 		res = 1;
-		goto exit;
 	}
 	pthread_spin_unlock(&trace->trace_lock);
 
-exit:
 	return res;
 }
 
@@ -222,20 +218,18 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 	pthread_spin_lock(&trace->trace_lock);
 	if(trace->trace_io_cur>=trace->trace_io_cnt){
 		res = -1;
-		goto exit;
+	}else{
+		io = &(trace->trace_buf[trace->trace_io_cur]);
+		*arrival_time = io->arrival_time;
+		*devno = io->devno;
+		*bcount = io->bcount;
+		*blkno = io->blkno;
+		*flags = io->flags;
+		trace->trace_io_cur++;
 	}
 	
-	io = &(trace->trace_buf[trace->trace_io_cur]);
-	*arrival_time = io->arrival_time;
-	*devno = io->devno;
-	*bcount = io->bcount;
-	*blkno = io->blkno;
-	*flags = io->flags;
-
-	trace->trace_io_cur++;
 	pthread_spin_unlock(&trace->trace_lock);
 
-exit:
 	return res;
 }
 
@@ -498,15 +492,18 @@ void *sub_worker(void *threadid)
 check_timeout:
 
 		//if(feof(t_info->trace_fp)){
-		if(trace_eof(trace)){
+		pthread_spin_lock(&trace->trace_lock);
+		if(trace->trace_io_cur>=trace->trace_io_cnt){
 			if(trace->timeout && io_stat->execution_time < trace->timeout){
 				trace_reset(trace);
 				io_stat->trace_repeat_count++;
 				printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
 			}else{
+				pthread_spin_unlock(&trace->trace_lock);
 				goto Timeout;
 			}
 		}
+		pthread_spin_unlock(&trace->trace_lock);
 	}
 
 Timeout:
@@ -613,11 +610,11 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		gettimeofday(&tv_end, NULL);
 		execution_time = time_since(&tv_start, &tv_end);
 		if(timeout){
-			printf("time = %fs (remaining = %fs) bandwidth = %fMB/s Latency = %fus          \r",
+			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.3fs          \r",
 					execution_time, timeout-execution_time,
 					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
 		}else{
-			printf("time = %.2fs (remaining = %.2fs %.0f%%) bandwidth = %fMB/s Latency = %fus          \r",
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.3fs          \r",
 					execution_time, execution_time/progress_percent*100, (double)100-progress_percent,
 					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
 
@@ -814,7 +811,7 @@ int main(int argc, char **argv){
 
 		strcpy(trace->tracename, argv[argc_offset+i]);
 		strcpy(trace->filename, argv[ARG_DEV]);
-		fprintf(result_fp, " %d thread using %s trace \n", (int)i, trace->filename);
+		//fprintf(result_fp, " %d thread using %s trace \n", (int)i, trace->filename);
 
 		open_flags = O_RDWR|O_DIRECT;
 		trace->fd =disk_open(trace->filename, open_flags); 
@@ -894,7 +891,6 @@ int main(int argc, char **argv){
 
 	main_worker();
 
-
 	for(t=0;t<nr_thread;t++){
 		struct trace_info_t *trace = th_info[t].trace;
 	//	printf("In main: creating thread %ld\n", t);
@@ -920,6 +916,7 @@ int main(int argc, char **argv){
 	}
 
 	for(t=0;t<nr_trace;t++){
+		pthread_spin_destroy(&traces[i].trace_lock);
 		fclose(traces[t].trace_fp);
 		disk_close(traces[t].fd);
 	}
