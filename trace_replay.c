@@ -25,7 +25,7 @@ int cnt=0;
 int cnt2=0;
 int nr_thread;
 int nr_trace;
-pthread_spinlock_t spinlock;
+//pthread_spinlock_t spinlock;
 struct timeval tv_start, tv_end, tv_result;
 double execution_time = 0.0;
 unsigned long genrand();
@@ -174,6 +174,8 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 
 	gettimeofday(&job->stop_time, NULL);
 
+	pthread_spin_lock(&io_stat->stat_lock);
+
 	io_stat->latency_sum += time_since(&job->start_time, &job->stop_time);
 	io_stat->latency_count ++;
 
@@ -182,6 +184,7 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 		io_stat->total_rbytes += job->bytes;
 	else
 		io_stat->total_wbytes += job->bytes;
+	pthread_spin_unlock(&io_stat->stat_lock);
 }
 
 struct simple_bio {
@@ -270,12 +273,11 @@ int make_jobs(struct thread_info_t *t_info){
 			return -1;
 		}
 		*/
-		cnt++;
-		if(cnt % 100 == 0 && io_stat->latency_count>0 && io_stat->execution_time>0)
-		{
-
-			printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
-		}
+		//cnt++;
+		//if(cnt % 100 == 0 && io_stat->latency_count>0 && io_stat->execution_time>0)
+		//{
+		//	printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
+		//}
 	
 		/*
 		bcount=8;
@@ -511,6 +513,10 @@ Timeout:
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
 	printf(" Finalizing thread %d ... %s\n", (int)tid, trace->tracename);
 
+	pthread_mutex_lock(&t_info->mutex);
+	t_info->done = 1;
+	pthread_mutex_unlock(&t_info->mutex);
+
 	//printf (" pthread end id = %d \n", (int)tid);
 
 
@@ -518,11 +524,14 @@ Timeout:
 }
 #endif 
 
-int print_result(int nr_trace, int nr_thread, FILE *fp){
+
+int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 	unsigned long long total_bytes = 0;
 	unsigned long long total_rbytes = 0;
 	unsigned long long total_wbytes = 0;
 	unsigned long long total_ios = 0;
+	double latency_sum;
+	unsigned long long latency_count;
 	int per_thread = nr_thread / nr_trace;
 	int i, j;
 	
@@ -538,6 +547,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp){
 			int th_num = i * per_thread + j;
 			struct io_stat_t *io_stat_src = &th_info[th_num].io_stat;
 
+			pthread_spin_lock(&io_stat_src->stat_lock);
 			io_stat_dst.latency_sum+= io_stat_src->latency_sum;
 			io_stat_dst.latency_count += io_stat_src->latency_count;
 			io_stat_dst.total_operations += io_stat_src->total_operations;
@@ -547,40 +557,56 @@ int print_result(int nr_trace, int nr_thread, FILE *fp){
 			io_stat_dst.total_error_bytes+= io_stat_src->total_error_bytes;
 			io_stat_dst.execution_time+= io_stat_src->execution_time;
 			io_stat_dst.trace_repeat_count+=io_stat_src->trace_repeat_count;
+			pthread_spin_unlock(&io_stat_src->stat_lock);
 		}
 
-		fprintf(fp, "\n");
+		if(detail){
+			fprintf(fp, "\n");
 
-		fprintf(fp, " Per Trace %d I/O statistics \n", i);
-		fprintf(fp, " Trace name = %s \n", traces[i].tracename);
-		io_stat_dst.execution_time = io_stat_dst.execution_time/per_thread;
-		fprintf(fp, " Execution time = %f sec\n", io_stat_dst.execution_time);
-		fprintf(fp, " Avg latency = %f sec\n", (double)io_stat_dst.latency_sum/io_stat_dst.latency_count);
-		fprintf(fp, " IOPS = %f\n", io_stat_dst.latency_count/io_stat_dst.execution_time);
-		fprintf(fp, " Bandwidth (total) = %f MB/s\n", (double)io_stat_dst.total_bytes/MB/io_stat_dst.execution_time);
-		fprintf(fp, " Bandwidth (read) = %f MB/s\n", (double)io_stat_dst.total_rbytes/MB/io_stat_dst.execution_time);
-		fprintf(fp, " Bandwidth (write) = %f MB/s\n", (double)io_stat_dst.total_wbytes/MB/io_stat_dst.execution_time);
-		fprintf(fp, " Total traffic = %f MB\n", (double)io_stat_dst.total_bytes/MB);
-		fprintf(fp, " Read traffic = %f MB\n", (double)io_stat_dst.total_rbytes/MB);
-		fprintf(fp, " Write traffic = %f MB\n", (double)io_stat_dst.total_wbytes/MB);
-		fprintf(fp, " Trace reset count = %d\n", io_stat_dst.trace_repeat_count);
+			fprintf(fp, " Per Trace %d I/O statistics \n", i);
+			fprintf(fp, " Trace name = %s \n", traces[i].tracename);
+			io_stat_dst.execution_time = io_stat_dst.execution_time/per_thread;
+			fprintf(fp, " Execution time = %f sec\n", io_stat_dst.execution_time);
+			fprintf(fp, " Avg latency = %f sec\n", (double)io_stat_dst.latency_sum/io_stat_dst.latency_count);
+			fprintf(fp, " IOPS = %f\n", io_stat_dst.latency_count/io_stat_dst.execution_time);
+			fprintf(fp, " Bandwidth (total) = %f MB/s\n", (double)io_stat_dst.total_bytes/MB/io_stat_dst.execution_time);
+			fprintf(fp, " Bandwidth (read) = %f MB/s\n", (double)io_stat_dst.total_rbytes/MB/io_stat_dst.execution_time);
+			fprintf(fp, " Bandwidth (write) = %f MB/s\n", (double)io_stat_dst.total_wbytes/MB/io_stat_dst.execution_time);
+			fprintf(fp, " Total traffic = %f MB\n", (double)io_stat_dst.total_bytes/MB);
+			fprintf(fp, " Read traffic = %f MB\n", (double)io_stat_dst.total_rbytes/MB);
+			fprintf(fp, " Write traffic = %f MB\n", (double)io_stat_dst.total_wbytes/MB);
+			fprintf(fp, " Trace reset count = %d\n", io_stat_dst.trace_repeat_count);
+		}
 
 		total_bytes += io_stat_dst.total_bytes;
 		total_rbytes += io_stat_dst.total_rbytes;
 		total_wbytes += io_stat_dst.total_wbytes;
+		latency_count += io_stat_dst.latency_count;
 		total_ios += io_stat_dst.latency_count;
+		latency_sum += io_stat_dst.latency_sum;
+
 	}
 
-	fprintf(fp, "\n Aggregrated Result \n");
-	fprintf(fp, " Agg Execution time: %.6f sec\n", execution_time);
-	fprintf(fp, " Agg IOPS = %f \n", (double)total_ios/execution_time);
-	fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_bytes/MB/execution_time);
-	fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_rbytes/MB/execution_time);
-	fprintf(fp, " Agg Write bandwidth = %f MB/s \n", (double)total_wbytes/MB/execution_time);
-	fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_bytes/MB);
-	fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_rbytes/MB);
-	fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_wbytes/MB);
-	fflush(fp);
+	if(detail){
+		fprintf(fp, "\n Aggregrated Result \n");
+		fprintf(fp, " Agg Execution time: %.6f sec\n", execution_time);
+		fprintf(fp, " Agg IOPS = %f \n", (double)total_ios/execution_time);
+		fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_bytes/MB/execution_time);
+		fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_rbytes/MB/execution_time);
+		fprintf(fp, " Agg Write bandwidth = %f MB/s \n", (double)total_wbytes/MB/execution_time);
+		fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_bytes/MB);
+		fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_rbytes/MB);
+		fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_wbytes/MB);
+		fflush(fp);
+	}else{
+		gettimeofday(&tv_end, NULL);
+		//timeval_subtract(&tv_result, &tv_end, &tv_start);
+		execution_time = time_since(&tv_start, &tv_end);
+		printf("time = %fs, bandwidth = %fMB/s Latency = %fus          \r", execution_time/1000000,
+				(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
+		//printf(" %f %llu\n", execution_time, total_bytes);
+		fflush(fp);
+	}
 }
 
 #define ARG_QDEPTH 1
@@ -603,9 +629,9 @@ void finalize(){
 	execution_time = time_since(&tv_start, &tv_end);
 
 	//print_result(nr_thread, stdout);
-	print_result(nr_trace, nr_thread, result_fp);
+	print_result(nr_trace, nr_thread, result_fp, 1);
 	fclose(result_fp);
-	fprintf(stdout, " Finalizing Trace Replayer \n");
+	fprintf(stdout, "\n Finalizing Trace Replayer \n");
 }
 
 void sig_handler(int signum)
@@ -659,6 +685,35 @@ int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 
 	trace->trace_io_cnt++;
 	return 0;
+}
+
+void main_worker(){
+	struct thread_info_t *t_info;
+	int done;
+	int i;
+	
+	while(1){
+		done = 0;
+
+		for(i = 0;i < nr_thread;i++){
+			t_info = &th_info[i];
+			pthread_mutex_lock(&t_info->mutex);
+			done += t_info->done;
+			pthread_mutex_unlock(&t_info->mutex);
+		}
+
+		if(done==nr_thread)
+			break;
+
+		//printf(" test ... \n");
+		print_result(nr_trace, nr_thread, stdout, 0);
+//		printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
+
+		usleep(500000);
+	}
+
+	printf(" main worker has been finished ... \n");
+
 }
 
 int main(int argc, char **argv){
@@ -753,15 +808,15 @@ int main(int argc, char **argv){
 		pthread_spin_init(&trace->trace_lock, 0);
 		ioctl(trace->fd, BLKGETSIZE64, &trace->total_capacity);
 		trace->total_pages = trace->total_capacity/PAGE_SIZE; 
-		trace->total_pages = trace->total_pages/nr_thread;
+		trace->total_pages = trace->total_pages/nr_trace;
 		trace->total_sectors = trace->total_pages * SPP;
 		trace->total_capacity = trace->total_pages * PAGE_SIZE;
-		trace->start_partition = trace->total_capacity * t;
+		trace->start_partition = trace->total_capacity * i;
 		trace->start_page = trace->start_partition/PAGE_SIZE;
 		trace->timeout = timeout;
 
 
-		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)t,
+		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)i,
 				(double)trace->start_partition/1024/1024/1024, (double)trace->total_capacity/1024/1024/1024
 				, trace->start_page, trace->start_page + trace->total_pages);
 
@@ -785,6 +840,7 @@ int main(int argc, char **argv){
 		t_info->queue_depth = qdepth;
 		t_info->queue_count = 0;
 		t_info->active_count = 0;
+		t_info->done = 0;
 
 		for(i=0;i<qdepth;i++){
 			t_info->th_buf[i] = allocate_aligned_buffer(MAX_BYTES);
@@ -792,6 +848,7 @@ int main(int argc, char **argv){
 		}
 
 		memset(&t_info->io_stat, 0x00, sizeof(struct io_stat_t));
+		pthread_spin_init(&t_info->io_stat.stat_lock, 0);
 
 		io_queue_init(t_info->queue_depth, &t_info->io_ctx);
 
@@ -808,16 +865,12 @@ int main(int argc, char **argv){
 		}
 	}
 
-	pthread_spin_init(&spinlock, 0);
+	//pthread_spin_init(&spinlock, 0);
 	gettimeofday(&tv_start, NULL);
 
-#if USE_MAINWORKER == 1
-	printf(" use main worker ... \n");
 	main_worker();
-#endif 
-	signal(SIGINT, sig_handler);
 
-//	sleep(10);
+	signal(SIGINT, sig_handler);
 
 	for(t=0;t<nr_thread;t++){
 		struct trace_info_t *trace = th_info[t].trace;
@@ -943,7 +996,7 @@ genrand()
 }
 
 
-#if USE_MAINWORKER == 1
+#if 0
 void *sub_worker(void *threadid)
 {
 	long tid =  (long)threadid;
@@ -1045,51 +1098,7 @@ void *sub_worker(void *threadid)
 
 	return NULL;
 }
-void main_worker(){
-	struct io_job *job;
-	int i, j, k;
 
-	for(j = 0;j < 4*256*64;j++){
-		for (i=0; i<nr_thread; i++) {
-			unsigned long page;
-
-			pthread_mutex_lock(&th_info[i].mutex);
-
-			while(th_info[i].queue_count>=MAX_QDEPTH){
-			//	printf(" wait ... qcount = %d\n", th_info[i].queue_count);
-				pthread_cond_wait(&th_info[i].cond_main, &th_info[i].mutex);
-			}
-
-			for(k = 0;k < 1;k++){
-				job = (struct io_job *)malloc(sizeof(struct io_job));
-
-				page = RND(th_info[i].total_pages);
-				job->offset = (long long)page * PAGE_SIZE;
-				job->bytes = PAGE_SIZE;
-				job->rw = 0;
-				job->buf = allocate_aligned_buffer(job->bytes);
-
-				//gettimeofday(&job->start_time, NULL);
-				flist_add_tail(&job->list, &th_info[i].queue);
-				th_info[i].queue_count++;
-
-				pthread_spin_lock(&spinlock);
-				total_bytes += job->bytes;
-				pthread_spin_unlock(&spinlock);
-			}
-
-
-		//	if(th_info[i].queue_count>=MAX_QDEPTH)
-			//printf(" qcount = %d\n", th_info[i].queue_count);
-
-
-			pthread_mutex_unlock(&th_info[i].mutex);
-			pthread_cond_signal(&th_info[i].cond_sub);
-
-		}
-	}
-	printf(" finish main worker .. \n");
-}
 
 #endif 
 

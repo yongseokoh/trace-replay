@@ -19,6 +19,7 @@
 #define MAX_BYTES (4*1024*1024)
 
 struct io_stat_t{
+	pthread_spinlock_t stat_lock;
 	double latency_sum;
 	unsigned int latency_count;
 	unsigned long long total_operations;
