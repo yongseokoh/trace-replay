@@ -613,7 +613,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		execution_time = time_since(&tv_start, &tv_end);
 		if(timeout){
 			printf("time = %fs (remaining = %fs) bandwidth = %fMB/s Latency = %fus          \r",
-					execution_time, execution_time-timeout,
+					execution_time, timeout-execution_time,
 					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
 		}else{
 			printf("time = %.2fs (remaining = %.2fs %.0f%%) bandwidth = %fMB/s Latency = %fus          \r",
