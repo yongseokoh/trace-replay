@@ -233,7 +233,31 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 	return res;
 }
 
-int make_jobs(struct thread_info_t *t_info){
+static void io_done(io_context_t ctx, struct iocb *iocb, long res, long res2)
+{
+	/* library needs accessors to look at iocb? */
+	int iosize = iocb->u.c.nbytes;
+	char *buf = iocb->u.c.buf;
+	off_t offset = iocb->u.c.offset;
+
+#if 0
+	if (res2 != 0)
+		io_error("aio read", res2);
+	if (res != iosize) {
+		fprintf(stderr, "read missing bytes expect %d got %d\n", (int)iocb->u.c.nbytes, res);
+		exit(1);
+	}
+#endif 
+
+	///* turn read into write */
+	//io_prep_pwrite(iocb, dstfd, buf, iosize, offset);
+	//io_set_callback(iocb, wr_done);
+	//if (1 != (res = io_submit(ctx, 1, &iocb)))
+	//	io_error("io_submit write", res);
+	//write(2, "r", 1);
+}
+
+int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, int depth){
 	struct io_job *job;
 	char line[201];
 	double arrival_time;
@@ -243,58 +267,18 @@ int make_jobs(struct thread_info_t *t_info){
 	int flags;
 	int i,j;
 	struct io_stat_t *io_stat = &t_info->io_stat;
-	struct simple_bio bio[128];
-	int sb_cnt = 0;
-	int temp,temp2;
-//	while(!feof(t_info->trace_fp)){
-	for(i = 0;i < t_info->queue_depth;i++){
+	int cnt = 0;
+
+	for(i = 0;i < depth;i++){
 		unsigned long page;
 		struct trace_info_t *trace = t_info->trace;
-		//job = (struct io_job *)malloc(sizeof(struct io_job));
-		job = t_info->th_jobs[i];
 		
 		if(trace_io_get(&arrival_time, &devno, &blkno, &bcount, &flags, t_info->trace)){
-			return -1;
+			return cnt;
 		}
-		/*
-		if (fgets(line, 200, t_info->trace_fp) == NULL) {
-			//printf(" fges error \n");
-			return -1;
-		}
-		
-		if (sscanf(line, "%lf %d %d %d %x\n", &arrival_time, &devno, &blkno, &bcount, &flags) != 5) {
-			fprintf(stderr, "Wrong number of arguments for I/O trace event type\n");
-			fprintf(stderr, "line: %s", line);
-			return -1;
-		}
-		*/
-		//cnt++;
-		//if(cnt % 100 == 0 && io_stat->latency_count>0 && io_stat->execution_time>0)
-		//{
-		//	printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
-		//}
-	
-		/*
-		bcount=8;
-		if(cnt % 10 == 0){
-			if(cnt2 == 0)
-			{
-				cnt2 = 1;
-				cnt -= 10;
-			}
 
-			else if(cnt2 ==1)
-			{
-				cnt -= 10;
-				cnt2++;
-			}
-			else
-				cnt2=0;
-		}
-		blkno = cnt*1000;
-		*/
-
-
+		//job = t_info->th_jobs[t_info->buf_cur];
+		job = (struct io_job *)malloc(sizeof(struct io_job));
 #if 1
 		align_sector(t_info, &blkno, &bcount);
 //		printf( "%lf %d %d %d %x\n", arrival_time, devno, blkno, bcount, flags);
@@ -313,59 +297,30 @@ int make_jobs(struct thread_info_t *t_info){
 		job->bytes = PAGE_SIZE;
 		job->rw = 0;
 #endif
-		bio[i].bcount = bcount;
-		bio[i].blkno = blkno;
-		bio[i].devno = devno;
-		bio[i].flags = flags;
 		
-#if 0 
-		for( j=0; j<i; j++ ){
-			if( bio[i].devno == bio[j].devno ) {
-	
-				if(bio[i].flags == bio[j].flags
-				&& (bio[i].blkno == ( bio[j].blkno + bio[j].bcount - 8))) {
-					blkno += 8;
-					bcount -= 8;
-			
-					if(bcount <= 0)
-					{
-						trace->trace_io_cur--;
-						return 0;
-					}
-					job->offset = (long long)blkno * SECTOR_SIZE;
-					job->bytes = (size_t)bcount * SECTOR_SIZE;
-					goto out;
-					
-				}
-#if 0 
-				temp =  bio[i].blkno - ( bio[j].blkno + bio[j].bcount -1);
-				temp2 =   ((bio[i].blkno + bio[i].bcount - 1) - bio[j].blkno) ;
-				
-				temp = (temp > 0) ? 1 : -1;
-				temp2 = (temp2 > 0) ? 1 : -1;
-
-				if( temp * temp2 < 0) {
-					trace->trace_io_cur--;
-					return 0;
-				}
-#endif 
-			}
-			
-		}
-#endif 
 out:
 		//printf( "%d: %lf %d %d %d %x\n", i, arrival_time, devno, blkno, bcount, flags);
-		//job->buf = allocate_aligned_buffer(job->bytes);
-		job->buf = t_info->th_buf[i];
+		job->buf = allocate_aligned_buffer(job->bytes);
+		//job->buf = t_info->th_buf[t_info->buf_cur];
+		//t_info->buf_cur = (t_info->buf_cur+1)%t_info->queue_depth;
 
 		gettimeofday(&job->start_time, NULL);
-		flist_add_tail(&job->list, &t_info->queue);
-		t_info->queue_count++;
 
+		ioq[cnt] = &job->iocb;
+		if(job->rw)
+			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+		else
+			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+
+		//io_set_callback(&job->iocb, io_done);
+		t_info->queue_count++;
+		cnt++;
 	}
-	return 0;
+
+	return cnt;
 }
 
+#if 0 
 int  remove_ioq(struct thread_info_t *t_info, struct iocb **ioq){
 	struct flist_head *ptr, *tmp;
 	struct io_job *job;
@@ -390,8 +345,11 @@ int  remove_ioq(struct thread_info_t *t_info, struct iocb **ioq){
 
 	return cnt;
 }
+#endif 
 
-int  make_ioq(struct thread_info_t *t_info, struct iocb **ioq){
+
+#if 0 
+int make_ioq(struct thread_info_t *t_info, struct iocb **ioq){
 	struct flist_head *ptr, *tmp;
 	struct io_job *job;
 	struct trace_info_t *trace = t_info->trace;
@@ -407,22 +365,24 @@ int  make_ioq(struct thread_info_t *t_info, struct iocb **ioq){
 		else
 			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 
+		io_set_callback(&job->iocb, io_done);
 		cnt++;
 		t_info->queue_count--;
 	}
 
 	return cnt;
 }
+#endif
 
 void wait_completion(struct thread_info_t *t_info, int cnt){
 	struct io_job *job;
 	int complete_count = 0;
 	int i;
 
-	while(cnt){
-		complete_count = io_getevents(t_info->io_ctx, cnt, cnt, t_info->events, NULL);
+	while(1){
+		complete_count = io_getevents(t_info->io_ctx, 1, cnt, t_info->events, NULL);
+		//complete_count = io_getevents(t_info->io_ctx, cnt, cnt, t_info->events, NULL);
 		if(complete_count < 0){
-	//		printf(" io error \n");
 			continue;
 		}
 		for(i = 0;i < complete_count;i++){
@@ -433,10 +393,12 @@ void wait_completion(struct thread_info_t *t_info, int cnt){
 
 			update_iostat(t_info, job);
 
-		//	free(job->buf);
-		//	free(job);
+			free(job->buf);
+			free(job);
 		}
+		t_info->queue_count-=complete_count;
 		cnt-=complete_count;
+		break;
 	}
 
 }
@@ -459,12 +421,13 @@ void *sub_worker(void *threadid)
 	gettimeofday(&io_stat->start_time, NULL);
 
 	while(1){
+		int max = t_info->queue_depth-t_info->queue_count;
 		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
-		rc = make_jobs(t_info);
+		cnt = make_jobs(t_info, ioq, max);
 		//if(rc<0)
 		//	goto check_timeout;
 #if 1
-		cnt = make_ioq(t_info, ioq);
+		//cnt = make_ioq(t_info, ioq);
 		if(!cnt){
 			if(trace_eof(trace))
 				goto check_timeout;
@@ -474,7 +437,7 @@ void *sub_worker(void *threadid)
 		if (rc < 0)
 			io_error("io_submit", rc);
 
-		wait_completion(t_info, cnt);
+		wait_completion(t_info, t_info->queue_count);
 #else
 
 		remove_ioq(t_info, ioq);
@@ -507,6 +470,9 @@ check_timeout:
 	}
 
 Timeout:
+
+	while(t_info->queue_count)
+		wait_completion(t_info, t_info->queue_count);
 
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
@@ -842,7 +808,7 @@ int main(int argc, char **argv){
 
 		printf(" thread %d uses %s trace \n", (int)t, trace->tracename);
 
-		INIT_FLIST_HEAD(&t_info->queue);
+		//INIT_FLIST_HEAD(&t_info->queue);
 		pthread_mutex_init(&t_info->mutex, NULL);
 		pthread_cond_init(&t_info->cond_sub, NULL);
 		pthread_cond_init(&t_info->cond_main, NULL);
@@ -865,6 +831,7 @@ int main(int argc, char **argv){
 			t_info->th_buf[i] = allocate_aligned_buffer(MAX_BYTES);
 			t_info->th_jobs[i] = malloc(sizeof(struct io_job));
 		}
+		t_info->buf_cur=0;
 
 		memset(&t_info->io_stat, 0x00, sizeof(struct io_stat_t));
 		pthread_spin_init(&t_info->io_stat.stat_lock, 0);

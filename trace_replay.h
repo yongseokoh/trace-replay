@@ -69,7 +69,7 @@ struct trace_info_t{
 struct thread_info_t{
 	int tid;
 
-	struct flist_head queue;
+//	struct flist_head queue;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond_main, cond_sub;
 	io_context_t io_ctx;
@@ -83,6 +83,7 @@ struct thread_info_t{
 
 	struct io_job *th_jobs[MAX_QDEPTH];
 	void *th_buf[MAX_QDEPTH];
+	int buf_cur;
 
 	struct io_stat_t io_stat;
 
