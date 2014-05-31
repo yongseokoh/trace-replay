@@ -18,7 +18,11 @@
 #include "flist.h"
 #include "trace_replay.h"
 
+#define REFRESH_SLEEP 1000000
+
 FILE *result_fp;
+FILE *log_fp;
+unsigned int log_count = 0;
 struct thread_info_t th_info[MAX_THREADS];
 struct trace_info_t traces[MAX_THREADS];
 int cnt=0;
@@ -185,6 +189,13 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 		io_stat->total_rbytes += job->bytes;
 	else
 		io_stat->total_wbytes += job->bytes;
+
+	io_stat->cur_bytes += job->bytes;
+	if(job->rw)
+		io_stat->cur_rbytes += job->bytes;
+	else
+		io_stat->cur_wbytes += job->bytes;
+
 	pthread_spin_unlock(&io_stat->stat_lock);
 }
 
@@ -459,7 +470,11 @@ check_timeout:
 		if(trace->trace_io_cur>=trace->trace_io_cnt){
 			if(trace->timeout && io_stat->execution_time < trace->timeout){
 				trace_reset(trace);
-				io_stat->trace_repeat_count++;
+				trace->trace_repeat_count++;
+				printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
+			}else if(trace->trace_repeat_count < trace->trace_repeat_num) {
+				trace_reset(trace);
+				trace->trace_repeat_count++;
 				printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
 			}else{
 				pthread_spin_unlock(&trace->trace_lock);
@@ -491,17 +506,13 @@ Timeout:
 
 
 int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
-	unsigned long long total_bytes = 0;
-	unsigned long long total_rbytes = 0;
-	unsigned long long total_wbytes = 0;
-	unsigned long long total_ios = 0;
-	double latency_sum;
-	unsigned long long latency_count;
-	int per_thread = nr_thread / nr_trace;
+	struct io_stat_t total_stat;
 	int i, j;
+	int per_thread = nr_thread / nr_trace;
 	double progress_percent = 0.0;
 	double temp_percent = 0.0;
 	
+	memset(&total_stat, 0x00, sizeof(struct io_stat_t));
 	for(i = 0;i < nr_trace;i++){
 		struct io_stat_t io_stat_dst;
 		struct trace_info_t *trace = &traces[i];
@@ -522,9 +533,16 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			io_stat_dst.total_bytes+= io_stat_src->total_bytes;
 			io_stat_dst.total_rbytes+= io_stat_src->total_rbytes;
 			io_stat_dst.total_wbytes+= io_stat_src->total_wbytes;
+			io_stat_dst.cur_bytes+= io_stat_src->cur_bytes;
+			io_stat_dst.cur_rbytes+= io_stat_src->cur_rbytes;
+			io_stat_dst.cur_wbytes+= io_stat_src->cur_wbytes;
+			io_stat_src->cur_bytes = 0;
+			io_stat_src->cur_rbytes = 0;
+			io_stat_src->cur_wbytes = 0;
+
 			io_stat_dst.total_error_bytes+= io_stat_src->total_error_bytes;
 			io_stat_dst.execution_time+= io_stat_src->execution_time;
-			io_stat_dst.trace_repeat_count+=io_stat_src->trace_repeat_count;
+			//io_stat_dst.trace_repeat_count+=io_stat_src->trace_repeat_count;
 			pthread_spin_unlock(&io_stat_src->stat_lock);
 		}
 
@@ -543,19 +561,22 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			fprintf(fp, " Total traffic = %f MB\n", (double)io_stat_dst.total_bytes/MB);
 			fprintf(fp, " Read traffic = %f MB\n", (double)io_stat_dst.total_rbytes/MB);
 			fprintf(fp, " Write traffic = %f MB\n", (double)io_stat_dst.total_wbytes/MB);
-			fprintf(fp, " Trace reset count = %d\n", io_stat_dst.trace_repeat_count);
+			fprintf(fp, " Trace reset count = %d\n", trace->trace_repeat_count);
 		}
 
-		total_bytes += io_stat_dst.total_bytes;
-		total_rbytes += io_stat_dst.total_rbytes;
-		total_wbytes += io_stat_dst.total_wbytes;
-		latency_count += io_stat_dst.latency_count;
-		total_ios += io_stat_dst.latency_count;
-		latency_sum += io_stat_dst.latency_sum;
+		total_stat.total_bytes += io_stat_dst.total_bytes;
+		total_stat.total_rbytes += io_stat_dst.total_rbytes;
+		total_stat.total_wbytes += io_stat_dst.total_wbytes;
+		total_stat.cur_bytes += io_stat_dst.cur_bytes;
+		total_stat.cur_rbytes += io_stat_dst.cur_rbytes;
+		total_stat.cur_wbytes += io_stat_dst.cur_wbytes;
+		total_stat.latency_count += io_stat_dst.latency_count;
+		total_stat.latency_sum += io_stat_dst.latency_sum;
 
 		
 		pthread_spin_lock(&trace->trace_lock);
-		temp_percent = (double)trace->trace_io_cur*100/trace->trace_io_cnt;
+		temp_percent = (double)(trace->trace_io_cur+(trace->trace_io_cnt*(trace->trace_repeat_count-1)))
+			*100/(trace->trace_io_cnt*trace->trace_repeat_num);
 		pthread_spin_unlock(&trace->trace_lock);
 		if(temp_percent>progress_percent)
 			progress_percent = temp_percent;
@@ -564,44 +585,58 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 	if(detail){
 		fprintf(fp, "\n Aggregrated Result \n");
 		fprintf(fp, " Agg Execution time: %.6f sec\n", execution_time);
-		fprintf(fp, " Agg IOPS = %f \n", (double)total_ios/execution_time);
-		fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_bytes/MB/execution_time);
-		fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_rbytes/MB/execution_time);
-		fprintf(fp, " Agg Write bandwidth = %f MB/s \n", (double)total_wbytes/MB/execution_time);
-		fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_bytes/MB);
-		fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_rbytes/MB);
-		fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_wbytes/MB);
+		fprintf(fp, " Agg IOPS = %f \n", (double)total_stat.latency_count/execution_time);
+		fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_stat.total_bytes/MB/execution_time);
+		fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_stat.total_rbytes/MB/execution_time);
+		fprintf(fp, " Agg Write bandwidth = %f MB/s \n", (double)total_stat.total_wbytes/MB/execution_time);
+		fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_stat.total_bytes/MB);
+		fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_stat.total_rbytes/MB);
+		fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_stat.total_wbytes/MB);
 		fflush(fp);
 	}else{
+		double avg_bw, cur_bw;
+		double latency;
 		gettimeofday(&tv_end, NULL);
+
 		execution_time = time_since(&tv_start, &tv_end);
+		avg_bw = (double)total_stat.total_bytes/MB/execution_time;
+		cur_bw = (double)total_stat.cur_bytes/MB/(REFRESH_SLEEP/1000000);
+		latency = (double)total_stat.latency_sum/total_stat.latency_count;
+
 		if(timeout){
 			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.3fs          \r",
 					execution_time, timeout-execution_time,
-					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
+					avg_bw, latency);
 		}else{
 			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.3fs          \r",
-					execution_time, execution_time/progress_percent*100-execution_time, (double)100-progress_percent,
-					(double)total_bytes/MB/execution_time, (double)latency_sum/latency_count);
-
+					execution_time, 
+					execution_time/progress_percent*100-execution_time, 
+					(double)100-progress_percent,
+					avg_bw, latency);
 		}
 		//printf(" %f %llu\n", execution_time, total_bytes);
+		if(log_count==0)
+			fprintf( log_fp, "ExecTime\tAvgBW\tCurBw\n");
+
+		fprintf( log_fp, "%f\t%f\t%f\n", execution_time, avg_bw, cur_bw);
+		log_count++;
 		fflush(fp);
 	}
 }
 
-#define ARG_QDEPTH 1
-#define ARG_THREAD 2
-#define ARG_OUTPUT 3
+#define ARG_QDEPTH	1
+#define ARG_THREAD	2
+#define ARG_OUTPUT	3
 #define ARG_TIMEOUT 4
-#define ARG_DEV 5
-#define ARG_TRACE 6
+#define ARG_REPEAT	5
+#define ARG_DEV		6
+#define ARG_TRACE	7
 
 void usage_help(){
 	printf("\n Invalid command!!\n");
 	printf(" Usage:\n");
-	printf(" #./trace_replay qdepth per_thread output timeout devicefile tracefile1 tracefile2\n");
-	printf(" #./trace_replay 32 2 result.txt 60 /dev/sdb1 trace.dat trace.dat\n\n");
+	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 tracefile2\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat trace.dat\n\n");
 }
 
 void finalize(){
@@ -612,6 +647,7 @@ void finalize(){
 	//print_result(nr_thread, stdout);
 	print_result(nr_trace, nr_thread, result_fp, 1);
 	fclose(result_fp);
+	fclose(log_fp);
 	fprintf(stdout, "\n Finalizing Trace Replayer \n");
 }
 
@@ -690,7 +726,7 @@ void main_worker(){
 		print_result(nr_trace, nr_thread, stdout, 0);
 //		printf("time: %lf bandwidth = %f Latency = %f\r",arrival_time, (double)io_stat->total_bytes/MB/io_stat->execution_time, (double)io_stat->latency_sum/io_stat->latency_count);
 
-		usleep(500000);
+		usleep(REFRESH_SLEEP);
 	}
 
 	printf(" main worker has been finished ... \n");
@@ -707,6 +743,7 @@ int main(int argc, char **argv){
 	int argc_offset = ARG_TRACE;
 	int qdepth ;
 	int per_thread;
+	int repeat;
 	char line[201];
 
 	nr_trace = argc - argc_offset;
@@ -715,7 +752,6 @@ int main(int argc, char **argv){
 		usage_help();
 		return 0; 
 	}
-
 
 	per_thread = atoi(argv[ARG_THREAD]);
 	if(per_thread<1 || per_thread*nr_trace>MAX_THREADS){
@@ -736,9 +772,21 @@ int main(int argc, char **argv){
 		qdepth = 1;
 
 	timeout = atof(argv[ARG_TIMEOUT]);
+	repeat = atoi(argv[ARG_REPEAT]);
+	if(timeout>0.0){
+		repeat = 1;
+	}
+	if(repeat==0)
+		repeat = 1;
 
 	result_fp = fopen(argv[ARG_OUTPUT],"w");
 	if(result_fp==NULL){
+		printf(" open file %s error \n", argv[ARG_OUTPUT]);
+		return -1;
+	}
+	sprintf(line, "%s.log", argv[ARG_OUTPUT]);
+	log_fp = fopen(line,"w");
+	if(log_fp==NULL){
 		printf(" open file %s error \n", argv[ARG_OUTPUT]);
 		return -1;
 	}
@@ -793,6 +841,8 @@ int main(int argc, char **argv){
 		trace->start_partition = trace->total_capacity * i;
 		trace->start_page = trace->start_partition/PAGE_SIZE;
 		trace->timeout = timeout;
+		trace->trace_repeat_count = 1;
+		trace->trace_repeat_num = repeat;
 
 
 		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)i,

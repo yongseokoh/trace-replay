@@ -26,6 +26,9 @@ struct io_stat_t{
 	unsigned long long total_bytes;
 	unsigned long long total_rbytes;
 	unsigned long long total_wbytes;
+	unsigned long long cur_bytes;
+	unsigned long long cur_rbytes;
+	unsigned long long cur_wbytes;
 	unsigned long long total_error_bytes;
 	struct timeval start_time, end_time;
 	double execution_time;
@@ -55,7 +58,8 @@ struct trace_info_t{
 	char tracename[STR_SIZE];
 	char filename[STR_SIZE];
 	int fd;
-
+	int trace_repeat_count;
+	int trace_repeat_num;
 	long long total_capacity;
 	long long total_pages;
 	long long total_sectors;
