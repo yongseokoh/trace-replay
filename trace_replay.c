@@ -238,14 +238,26 @@ int trace_eof(struct trace_info_t *trace){
 	return res;
 }
 
-int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* flags, struct trace_info_t *trace){
+int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* flags, struct trace_info_t *trace, struct io_stat_t *io_stat){
 	struct trace_io_req* io;
 	int res = 0;
 
 	pthread_spin_lock(&trace->trace_lock);
 	if(trace->trace_io_cur>=trace->trace_io_cnt){
-		res = -1;
-	}else{
+		if(trace->timeout && io_stat->execution_time < trace->timeout){
+			trace_reset(trace);
+			trace->trace_repeat_count++;
+			//printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
+		}else if(trace->trace_repeat_num && trace->trace_repeat_count < trace->trace_repeat_num) {
+			trace_reset(trace);
+			trace->trace_repeat_count++;
+			//printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
+		}else{
+			res = -1;
+		}
+	}
+
+	if(res!=-1){
 		io = &(trace->trace_buf[trace->trace_io_cur]);
 		*arrival_time = io->arrival_time;
 		*devno = io->devno;
@@ -300,7 +312,7 @@ int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, struct io_job **j
 		unsigned long page;
 		struct trace_info_t *trace = t_info->trace;
 		
-		if(trace_io_get(&arrival_time, &devno, &blkno, &bcount, &flags, t_info->trace)){
+		if(trace_io_get(&arrival_time, &devno, &blkno, &bcount, &flags, t_info->trace, io_stat)){
 			return cnt;
 		}
 
@@ -349,7 +361,7 @@ out:
 			printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
 
 		//io_set_callback(&job->iocb, io_done);
-		t_info->queue_count++;
+//		t_info->queue_count++;
 		cnt++;
 	}
 
@@ -449,11 +461,10 @@ void *sub_worker(void *threadid)
 	struct io_job *jobq[MAX_QDEPTH];
 	int rc;
 	int iter = 0;
-	
 	int cnt = 0;
 
 	//printf (" pthread start id = %d \n", (int)tid);
-	printf(" Starting thread %d ... %s\n", (int)tid, trace->tracename);
+	//printf(" Starting thread %d ... %s\n", (int)tid, trace->tracename);
 
 	gettimeofday(&io_stat->start_time, NULL);
 
@@ -467,32 +478,27 @@ void *sub_worker(void *threadid)
 		}
 
 		cnt = make_jobs(t_info, ioq, jobq, max);
-		//if(rc<0)
-		//	goto check_timeout;
-#if 1
-		//cnt = make_ioq(t_info, ioq);
 		if(!cnt){
 			if(trace_eof(trace))
-				goto check_timeout;
+				goto Timeout;
 		}
 		
 		rc = io_submit(t_info->io_ctx, cnt, ioq);
-		if(rc < 0){
+		if(rc != cnt && rc < 0){
 			int i;
-			io_error("io_submit", rc);
+			//io_error("io_submit", rc);
+			//printf(" queue count = %d \n", t_info->queue_count);
 			for(i=0;i<cnt;i++){
-				printf(" offset = %fGB\n", (double)jobq[i]->offset/1024/1024/1024);
+		//		printf(" offset = %fGB\n", (double)jobq[i]->offset/1024/1024/1024);
 				free(jobq[i]->buf);
 				free(jobq[i]);
 			}
 		}
+		if(rc>0)
+			t_info->queue_count += rc;
 		
-		wait_completion(t_info, t_info->queue_count);
-
-#else
-
-		remove_ioq(t_info, ioq);
-#endif 
+		if(t_info->queue_count)
+			wait_completion(t_info, t_info->queue_count);
 
 		iter++;
 		if(iter>100){
@@ -501,8 +507,10 @@ void *sub_worker(void *threadid)
 			if(io_stat->execution_time >trace->timeout && trace->timeout>0.0){
 				goto Timeout;
 			}
+			iter=0;
 		}
 
+#if 1 
 check_timeout:
 
 		//if(feof(t_info->trace_fp)){
@@ -522,6 +530,7 @@ check_timeout:
 			}
 		}
 		pthread_spin_unlock(&trace->trace_lock);
+#endif 
 	}
 
 Timeout:
@@ -531,7 +540,7 @@ Timeout:
 
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
-	printf(" Finalizing thread %d ... %s\n", (int)tid, trace->tracename);
+	//printf(" Finalizing thread %d ... %s\n", (int)tid, trace->tracename);
 
 	pthread_mutex_lock(&t_info->mutex);
 	t_info->done = 1;
@@ -851,7 +860,7 @@ int main(int argc, char **argv){
 		return -1;
 	}
 
-	fprintf(stdout, " Starting Trace Replayer \n");
+	//fprintf(stdout, " Starting Trace Replayer \n");
 	fprintf(result_fp, " Q depth = %d \n", qdepth);
 	fprintf(result_fp, " Timeout = %.2f seconds \n", timeout); 
 	fprintf(result_fp, " No of traces = %d \n", nr_trace);
@@ -916,7 +925,7 @@ int main(int argc, char **argv){
 		struct trace_info_t *trace = &traces[t/per_thread];
 		t_info->trace = trace;
 
-		printf(" thread %d uses %s trace \n", (int)t, trace->tracename);
+		//printf(" thread %d uses %s trace \n", (int)t, trace->tracename);
 
 		//INIT_FLIST_HEAD(&t_info->queue);
 		pthread_mutex_init(&t_info->mutex, NULL);
