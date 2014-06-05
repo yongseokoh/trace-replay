@@ -133,11 +133,11 @@ float tv_to_sec(struct timeval *tv){
 static void io_error(const char *func, int rc)
 {
 	if (rc == -ENOSYS)
-		fprintf(stderr, "AIO not in this kernel");
+		fprintf(stderr, "AIO not in this kernel\n");
 	else if (rc < 0)
-		fprintf(stderr, "%s: %s", func, strerror(rc));
+		fprintf(stderr, "%s: %s\n", func, strerror(rc));
 	else
-		fprintf(stderr, "%s: error %d", func, rc);
+		fprintf(stderr, "%s: error %d\n", func, rc);
 
 }
 
@@ -284,7 +284,7 @@ static void io_done(io_context_t ctx, struct iocb *iocb, long res, long res2)
 	//write(2, "r", 1);
 }
 
-int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, int depth){
+int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, struct io_job **jobq, int depth){
 	struct io_job *job;
 	char line[201];
 	double arrival_time;
@@ -333,12 +333,20 @@ out:
 
 		gettimeofday(&job->start_time, NULL);
 
+		if(job->offset/1024/1024/1024 > 500)
+			printf(" org: offset = %fGB\n", (double)job->offset/1024/1024/1024);
+
 		job->offset += trace->start_partition;
 		ioq[cnt] = &job->iocb;
+		jobq[cnt] = job;
+
 		if(job->rw)
 			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 		else
 			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+
+		if(job->offset/1024/1024/1024 > 500)
+			printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
 
 		//io_set_callback(&job->iocb, io_done);
 		t_info->queue_count++;
@@ -410,7 +418,7 @@ void wait_completion(struct thread_info_t *t_info, int cnt){
 	while(1){
 		complete_count = io_getevents(t_info->io_ctx, 1, cnt, t_info->events, NULL);
 		//complete_count = io_getevents(t_info->io_ctx, cnt, cnt, t_info->events, NULL);
-		if(complete_count < 0){
+		if(complete_count <= 0){
 			continue;
 		}
 		for(i = 0;i < complete_count;i++){
@@ -438,6 +446,7 @@ void *sub_worker(void *threadid)
 	struct trace_info_t *trace = t_info->trace;
 	struct io_stat_t *io_stat = &t_info->io_stat;
 	struct iocb *ioq[MAX_QDEPTH];
+	struct io_job *jobq[MAX_QDEPTH];
 	int rc;
 	int iter = 0;
 	
@@ -451,7 +460,13 @@ void *sub_worker(void *threadid)
 	while(1){
 		int max = t_info->queue_depth-t_info->queue_count;
 		//printf(" tid %d qcount %d \n", (int)tid, th_info[tid].queue_count);
-		cnt = make_jobs(t_info, ioq, max);
+		if(!max){
+			printf(" max = %d queue count = %d \n", max, t_info->queue_count);
+			wait_completion(t_info, t_info->queue_count);
+			max = t_info->queue_depth-t_info->queue_count;
+		}
+
+		cnt = make_jobs(t_info, ioq, jobq, max);
 		//if(rc<0)
 		//	goto check_timeout;
 #if 1
@@ -462,10 +477,18 @@ void *sub_worker(void *threadid)
 		}
 		
 		rc = io_submit(t_info->io_ctx, cnt, ioq);
-		if (rc < 0)
+		if(rc < 0){
+			int i;
 			io_error("io_submit", rc);
-
+			for(i=0;i<cnt;i++){
+				printf(" offset = %fGB\n", (double)jobq[i]->offset/1024/1024/1024);
+				free(jobq[i]->buf);
+				free(jobq[i]);
+			}
+		}
+		
 		wait_completion(t_info, t_info->queue_count);
+
 #else
 
 		remove_ioq(t_info, ioq);

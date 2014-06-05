@@ -10,7 +10,7 @@
 #define MB (1024*1024)
 #define GB (1024*1024*1024)
 #define MAX_QDEPTH 128
-#define MAX_THREADS 128
+#define MAX_THREADS 512
 #define STR_SIZE 128
 
 #define PAGE_SIZE 4096
