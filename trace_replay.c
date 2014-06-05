@@ -317,6 +317,7 @@ out:
 
 		gettimeofday(&job->start_time, NULL);
 
+		job->offset += trace->start_partition;
 		ioq[cnt] = &job->iocb;
 		if(job->rw)
 			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
