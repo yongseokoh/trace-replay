@@ -21,6 +21,9 @@
 struct io_stat_t{
 	pthread_spinlock_t stat_lock;
 	double latency_sum;
+	double latency_sum_sqr;
+	double latency_min;
+	double latency_max;
 	unsigned int latency_count;
 	unsigned long long total_operations;
 	unsigned long long total_bytes;

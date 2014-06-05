@@ -176,12 +176,28 @@ void align_sector(struct thread_info_t *t_info, int *blkno, int *bcount){
 
 void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 	struct io_stat_t *io_stat = &t_info->io_stat;
+	double latency;
 
 	gettimeofday(&job->stop_time, NULL);
 
 	pthread_spin_lock(&io_stat->stat_lock);
 
-	io_stat->latency_sum += time_since(&job->start_time, &job->stop_time);
+	latency = time_since(&job->start_time, &job->stop_time);
+
+	io_stat->latency_sum += latency; 	
+	io_stat->latency_sum_sqr += (latency * latency); 	
+
+	if(!io_stat->latency_count){
+		io_stat->latency_min = latency;
+		io_stat->latency_max = latency;
+	}
+
+	if(latency<io_stat->latency_min)
+		io_stat->latency_min = latency;
+
+	if(latency>io_stat->latency_max)
+		io_stat->latency_max = latency;
+
 	io_stat->latency_count ++;
 
 	io_stat->total_bytes += job->bytes;
@@ -529,6 +545,17 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 
 			pthread_spin_lock(&io_stat_src->stat_lock);
 			io_stat_dst.latency_sum+= io_stat_src->latency_sum;
+			io_stat_dst.latency_sum_sqr+= io_stat_src->latency_sum_sqr;
+
+			if(!j){
+				io_stat_dst.latency_min = io_stat_src->latency_min;
+				io_stat_dst.latency_max = io_stat_src->latency_max;
+			}else{
+				if( io_stat_src->latency_min < io_stat_dst.latency_min)
+					io_stat_dst.latency_min = io_stat_src->latency_min;
+				if( io_stat_src->latency_max > io_stat_dst.latency_max)
+					io_stat_dst.latency_max = io_stat_src->latency_max;
+			}
 			io_stat_dst.latency_count += io_stat_src->latency_count;
 			io_stat_dst.total_operations += io_stat_src->total_operations;
 			io_stat_dst.total_bytes+= io_stat_src->total_bytes;
@@ -548,13 +575,22 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		}
 
 		if(detail){
+			double sum_sqr;
+			double mean;
+			double variance;
 			fprintf(fp, "\n");
 
 			fprintf(fp, " Per Trace %d I/O statistics \n", i);
 			fprintf(fp, " Trace name = %s \n", traces[i].tracename);
 			io_stat_dst.execution_time = io_stat_dst.execution_time/per_thread;
 			fprintf(fp, " Execution time = %f sec\n", io_stat_dst.execution_time);
-			fprintf(fp, " Avg latency = %f sec\n", (double)io_stat_dst.latency_sum/io_stat_dst.latency_count);
+
+			mean = (double)io_stat_dst.latency_sum/io_stat_dst.latency_count;
+			sum_sqr = io_stat_dst.latency_sum_sqr;
+			variance = (sum_sqr - io_stat_dst.latency_sum * mean)/(io_stat_dst.latency_count-1);
+
+			fprintf(fp, " Avg latency = %f sec, variance = %f\n", mean, variance);
+			fprintf(fp, " Latency min = %f, max = %f sec\n", io_stat_dst.latency_min, io_stat_dst.latency_max);
 			fprintf(fp, " IOPS = %f\n", io_stat_dst.latency_count/io_stat_dst.execution_time);
 			fprintf(fp, " Bandwidth (total) = %f MB/s\n", (double)io_stat_dst.total_bytes/MB/io_stat_dst.execution_time);
 			fprintf(fp, " Bandwidth (read) = %f MB/s\n", (double)io_stat_dst.total_rbytes/MB/io_stat_dst.execution_time);
