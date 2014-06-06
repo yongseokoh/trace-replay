@@ -576,6 +576,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			struct io_stat_t *io_stat_src = &th_info[th_num].io_stat;
 
 			pthread_spin_lock(&io_stat_src->stat_lock);
+
 			io_stat_dst.latency_sum+= io_stat_src->latency_sum;
 			io_stat_dst.latency_sum_sqr+= io_stat_src->latency_sum_sqr;
 
@@ -588,6 +589,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 				if( io_stat_src->latency_max > io_stat_dst.latency_max)
 					io_stat_dst.latency_max = io_stat_src->latency_max;
 			}
+
 			io_stat_dst.latency_count += io_stat_src->latency_count;
 			io_stat_dst.total_operations += io_stat_src->total_operations;
 			io_stat_dst.total_bytes+= io_stat_src->total_bytes;
@@ -633,6 +635,17 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			fprintf(fp, " Trace reset count = %d\n", trace->trace_repeat_count);
 		}
 
+
+		if(!i){
+			total_stat.latency_min = io_stat_dst.latency_min;
+			total_stat.latency_max = io_stat_dst.latency_max;
+		}else{
+			if( io_stat_dst.latency_min < total_stat.latency_min)
+				total_stat.latency_min = io_stat_dst.latency_min;
+			if( io_stat_dst.latency_max > total_stat.latency_max)
+				total_stat.latency_max = io_stat_dst.latency_max;
+		}
+
 		total_stat.total_bytes += io_stat_dst.total_bytes;
 		total_stat.total_rbytes += io_stat_dst.total_rbytes;
 		total_stat.total_wbytes += io_stat_dst.total_wbytes;
@@ -654,6 +667,8 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 	if(detail){
 		fprintf(fp, "\n Aggregrated Result \n");
 		fprintf(fp, " Agg Execution time: %.6f sec\n", execution_time);
+		fprintf(fp, " Agg latency = %f, min = %f, max = %f sec\n", (double)total_stat.latency_sum/total_stat.latency_count, 
+				total_stat.latency_min, total_stat.latency_max);
 		fprintf(fp, " Agg IOPS = %f \n", (double)total_stat.latency_count/execution_time);
 		fprintf(fp, " Agg Total bandwidth = %f MB/s \n", (double)total_stat.total_bytes/MB/execution_time);
 		fprintf(fp, " Agg Read bandwidth = %f MB/s \n", (double)total_stat.total_rbytes/MB/execution_time);
