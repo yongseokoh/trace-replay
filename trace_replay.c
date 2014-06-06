@@ -357,8 +357,8 @@ out:
 		else
 			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 
-		if(job->offset/1024/1024/1024 > 500)
-			printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
+		//if(job->offset/1024/1024/1024 > 500)
+		//	printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
 
 		//io_set_callback(&job->iocb, io_done);
 //		t_info->queue_count++;
