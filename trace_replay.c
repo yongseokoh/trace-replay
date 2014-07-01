@@ -700,7 +700,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		}
 		//printf(" %f %llu\n", execution_time, total_bytes);
 		if(log_count==0)
-			fprintf( log_fp, "ExecTime\tAvgBW\tCurBw\n");
+			fprintf( log_fp, "#ExecTime\tAvgBW\tCurBw\n");
 
 		fprintf( log_fp, "%f\t%f\t%f\n", execution_time, avg_bw, cur_bw);
 		log_count++;
