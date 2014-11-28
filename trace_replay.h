@@ -85,6 +85,8 @@ struct trace_info_t{
 	long long total_sectors;
 	long long start_partition;
 	long long start_page;
+	double trace_timescale;
+	double trace_usleep;
 	double timeout;
 
 };

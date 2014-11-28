@@ -47,7 +47,7 @@ int cnt2=0;
 int nr_thread;
 int nr_trace;
 //pthread_spinlock_t spinlock;
-struct timeval tv_start, tv_end, tv_result;
+struct timeval tv_start, tv_end, tv_result,tv_start2;
 double execution_time = 0.0;
 double timeout;
 unsigned long genrand();
@@ -92,6 +92,23 @@ void sum_time(struct timeval *t1,struct timeval *t2)
 		t1->tv_sec += nsec;
 	}
 }
+
+static double time_since_ms(struct timeval *start_tv, struct timeval *stop_tv)
+{
+    double sec, usec;
+    double ret;
+    sec = stop_tv->tv_sec - start_tv->tv_sec;
+    usec = stop_tv->tv_usec - start_tv->tv_usec;
+    if (sec > 0 && usec < 0) {
+        sec--;
+	usec += 1000000;
+    } 
+    ret = sec *1000 + usec / (double)1000;
+    if (ret < 0)
+        ret = 0;
+    return ret;
+}
+
 
 static double time_since(struct timeval *start_tv, struct timeval *stop_tv)
 {
@@ -254,12 +271,15 @@ int trace_eof(struct trace_info_t *trace){
 
 	return res;
 }
-
 int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* flags, struct trace_info_t *trace, struct io_stat_t *io_stat){
 	struct trace_io_req* io;
+	
 	int res = 0;
 
-	pthread_spin_lock(&trace->trace_lock);
+	io = &(trace->trace_buf[trace->trace_io_cur]);
+	
+
+
 	if(trace->trace_io_cur>=trace->trace_io_cnt){
 		if(trace->timeout && io_stat->execution_time < trace->timeout){
 			trace_reset(trace);
@@ -275,7 +295,6 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 	}
 
 	if(res!=-1){
-		io = &(trace->trace_buf[trace->trace_io_cur]);
 		*arrival_time = io->arrival_time;
 		*devno = io->devno;
 		*bcount = io->bcount;
@@ -284,7 +303,7 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 		trace->trace_io_cur++;
 	}
 	
-	pthread_spin_unlock(&trace->trace_lock);
+
 
 	return res;
 }
@@ -295,7 +314,7 @@ static void io_done(io_context_t ctx, struct iocb *iocb, long res, long res2)
 	int iosize = iocb->u.c.nbytes;
 	char *buf = iocb->u.c.buf;
 	off_t offset = iocb->u.c.offset;
-
+	printf("io_done\n");
 #if 0
 	if (res2 != 0)
 		io_error("aio read", res2);
@@ -325,14 +344,44 @@ int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, struct io_job **j
 	struct io_stat_t *io_stat = &t_info->io_stat;
 	int cnt = 0;
 
+
 	for(i = 0;i < depth;i++){
 		unsigned long page;
 		struct trace_info_t *trace = t_info->trace;
+		struct timeval tv_now;
+		double now;
+		struct trace_io_req* io;
+
+
+
+		gettimeofday(&tv_now, NULL);
+		now = time_since_ms(&tv_start2, &tv_now);
 		
+		pthread_spin_lock(&trace->trace_lock);
+		io = &(trace->trace_buf[trace->trace_io_cur]);
+
+		printf("trace_io_get \n");
+		
+		while(now < io->arrival_time * trace->trace_timescale)
+		{
+			if(cnt>0){
+				pthread_spin_unlock(&trace->trace_lock);
+				return cnt;
+			}
+			printf("sleep: %lf - %lf\n", io->arrival_time, now);
+			usleep(trace->trace_usleep);
+			gettimeofday(&tv_now, NULL);
+			now = time_since_ms(&tv_start2, &tv_now);
+			io = &(trace->trace_buf[trace->trace_io_cur]);
+
+		}
+
 		if(trace_io_get(&arrival_time, &devno, &blkno, &bcount, &flags, t_info->trace, io_stat)){
+			pthread_spin_unlock(&trace->trace_lock);
 			return cnt;
 		}
 
+		pthread_spin_unlock(&trace->trace_lock);
 		//job = t_info->th_jobs[t_info->buf_cur];
 		job = (struct io_job *)malloc(sizeof(struct io_job));
 #if 1
@@ -377,7 +426,7 @@ out:
 		//if(job->offset/1024/1024/1024 > 500)
 		//	printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
 
-		//io_set_callback(&job->iocb, io_done);
+		io_set_callback(&job->iocb, io_done);
 //		t_info->queue_count++;
 		cnt++;
 	}
@@ -463,6 +512,7 @@ void wait_completion(struct thread_info_t *t_info, int cnt){
 		}
 		t_info->queue_count-=complete_count;
 		cnt-=complete_count;
+		printf("wait complete\n");
 		break;
 	}
 
@@ -736,8 +786,8 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 void usage_help(){
 	printf("\n Invalid command!!\n");
 	printf(" Usage:\n");
-	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 tracefile2\n");
-	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat trace.dat\n\n");
+	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 timescale1 usleep1 tracefile2 timescale2 usleep2 ...\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 trace.dat 0.5\n\n");
 }
 
 void finalize(){
@@ -847,7 +897,11 @@ int main(int argc, char **argv){
 	int repeat;
 	char line[201];
 
-	nr_trace = argc - argc_offset;
+	if((argc - argc_offset)%3 != 0){
+		printf("input time scale and usleep time\n");
+		return -1;
+	}
+	nr_trace = (argc - argc_offset)/3;
 
 	if(nr_trace<1){
 		usage_help();
@@ -911,9 +965,11 @@ int main(int argc, char **argv){
 		trace->trace_buf = malloc(sizeof(struct trace_io_req) * 1024);
 		trace->trace_io_cnt = 0;
 		trace->trace_io_cur = 0;
-		trace->trace_fp = fopen(argv[argc_offset+i], "r");
+		trace->trace_timescale = atof(argv[argc_offset+i*3+1]);
+		trace->trace_usleep = atoi(argv[argc_offset+i*3+2]);
+		trace->trace_fp = fopen(argv[argc_offset+i*3], "r");
 		if(trace->trace_fp == NULL){
-			printf("file open error %s\n", argv[argc_offset+i]);
+			printf("file open error %s\n", argv[argc_offset+i*2]);
 			return -1;
 		}
 		while(1){
@@ -924,7 +980,7 @@ int main(int argc, char **argv){
 				continue;
 		}
 
-		strcpy(trace->tracename, argv[argc_offset+i]);
+		strcpy(trace->tracename, argv[argc_offset+i*2]);
 		strcpy(trace->filename, argv[ARG_DEV]);
 		//fprintf(result_fp, " %d thread using %s trace \n", (int)i, trace->filename);
 
@@ -1004,6 +1060,7 @@ int main(int argc, char **argv){
 
 	//pthread_spin_init(&spinlock, 0);
 	gettimeofday(&tv_start, NULL);
+	gettimeofday(&tv_start2, NULL);
 
 	signal(SIGINT, sig_handler);
 
