@@ -26,7 +26,7 @@
 
 #define MB (1024*1024)
 #define GB (1024*1024*1024)
-#define MAX_QDEPTH 128
+#define MAX_QDEPTH (128*16)
 #define MAX_THREADS 512
 #define STR_SIZE 128
 
@@ -53,6 +53,8 @@ struct io_stat_t{
 	struct timeval start_time, end_time;
 	double execution_time;
 	int trace_repeat_count;
+	double time_diff;
+	unsigned int time_diff_cnt;
 };
 
 struct trace_io_req{
@@ -78,6 +80,7 @@ struct trace_info_t{
 	char tracename[STR_SIZE];
 	char filename[STR_SIZE];
 	int fd;
+
 	int trace_repeat_count;
 	int trace_repeat_num;
 	long long total_capacity;
