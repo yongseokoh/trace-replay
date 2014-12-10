@@ -791,11 +791,17 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		double avg_bw, cur_bw;
 		double latency;
 		double avg_time_diff;
-		gettimeofday(&tv_end, NULL);
+		double period_time;
+		struct timeval cur_tv;
 
+		gettimeofday(&cur_tv, NULL);
+		period_time = time_since(&tv_end, &cur_tv);
+
+		gettimeofday(&tv_end, NULL);
 		execution_time = time_since(&tv_start, &tv_end);
+
 		avg_bw = (double)total_stat.total_bytes/MB/execution_time;
-		cur_bw = (double)total_stat.cur_bytes/MB/(REFRESH_SLEEP/1000000);
+		cur_bw = (double)total_stat.cur_bytes/MB/period_time;
 		latency = (double)total_stat.latency_sum/total_stat.latency_count;
 
 		avg_time_diff = (double)total_stat.time_diff / total_stat.time_diff_cnt / 1000;
@@ -833,7 +839,7 @@ void usage_help(){
 	printf("\n Invalid command!!\n");
 	printf(" Usage:\n");
 	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 timescale1 tracefile2 timescale2 ...\n");
-	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 100 trace.dat 0.5 1000\n\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 trace.dat 0.5\n\n");
 }
 
 void finalize(){
