@@ -77,9 +77,13 @@ struct trace_info_t{
 	struct trace_io_req *trace_buf;
 	int trace_io_cnt;
 	int trace_io_cur;
+	int trace_io_issue_count;
 	char tracename[STR_SIZE];
 	char filename[STR_SIZE];
 	int fd;
+	int synthetic;
+	long long wanted_io_count;
+	int utilization;
 
 	int trace_repeat_count;
 	int trace_repeat_num;
@@ -146,5 +150,8 @@ typedef unsigned int            __u32;
 #if TEST_OS == LINUX
 typedef unsigned long long			__u64;
 #endif
+
+long long get_total_bytes(int nr_trace, int nr_thread);
+void synthetic_mix(struct trace_info_t *trace);
 
 #endif 

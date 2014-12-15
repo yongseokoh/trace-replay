@@ -50,6 +50,7 @@ int nr_trace;
 struct timeval tv_start, tv_end, tv_result,tv_start2;
 double execution_time = 0.0;
 double timeout;
+long long wanted_io_count;
 unsigned long genrand();
 #define RND(x) ((x>0)?(genrand() % (x)):0)
 
@@ -268,20 +269,49 @@ int trace_eof(struct trace_info_t *trace){
 	if(trace->trace_io_cur>=trace->trace_io_cnt){
 		res = 1;
 	}
+	if(trace->trace_io_issue_count>=trace->wanted_io_count){
+		res = 1;
+	}
 	pthread_spin_unlock(&trace->trace_lock);
 
 	return res;
 }
+
+
+int try_trace_reset(struct trace_info_t *trace, struct io_stat_t *io_stat){
+	int res = 0;
+	if(trace->timeout && io_stat->execution_time < trace->timeout){
+		trace_reset(trace);
+		trace->trace_repeat_count++;
+	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
+		trace_reset(trace);
+		synthetic_mix(trace);
+		trace->trace_repeat_count++;
+		printf(" repeat trace file thread\n");
+	}else if(trace->trace_repeat_num && trace->trace_repeat_count < trace->trace_repeat_num) {
+		trace_reset(trace);
+		trace->trace_repeat_count++;
+		//printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
+	}else{
+		res = -1;
+	}
+
+	return res;
+}
+
 int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* flags, struct trace_info_t *trace, struct io_stat_t *io_stat){
 	struct trace_io_req* io;
 	
 	int res = 0;
 
 	io = &(trace->trace_buf[trace->trace_io_cur]);
-	
 
-
-	if(trace->trace_io_cur>=trace->trace_io_cnt){
+	//printf(" %d %d \n", trace->trace_io_issue_count, wanted_io_count);
+	if(trace->wanted_io_count && trace->trace_io_issue_count>=trace->wanted_io_count){
+		res = -1;
+	}else if(trace->trace_io_cur>=trace->trace_io_cnt){
+		res = try_trace_reset(trace, io_stat);
+#if 0 
 		if(trace->timeout && io_stat->execution_time < trace->timeout){
 			trace_reset(trace);
 			trace->trace_repeat_count++;
@@ -293,7 +323,11 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 		}else{
 			res = -1;
 		}
+#else
+
+#endif
 	}
+
 
 	if(res!=-1){
 		*arrival_time = io->arrival_time;
@@ -302,8 +336,9 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 		*blkno = io->blkno;
 		*flags = io->flags;
 		trace->trace_io_cur++;
-	}
-	
+		trace->trace_io_issue_count++;
+	}	
+
 	//printf("trace-io-get\n");
 
 	return res;
@@ -621,6 +656,7 @@ check_timeout:
 		//if(feof(t_info->trace_fp)){
 		pthread_spin_lock(&trace->trace_lock);
 		if(trace->trace_io_cur>=trace->trace_io_cnt){
+#if 0 
 			if(trace->timeout && io_stat->execution_time < trace->timeout){
 				trace_reset(trace);
 				trace->trace_repeat_count++;
@@ -633,6 +669,12 @@ check_timeout:
 				pthread_spin_unlock(&trace->trace_lock);
 				goto Timeout;
 			}
+#else
+			if(try_trace_reset(trace, io_stat)){
+				pthread_spin_unlock(&trace->trace_lock);
+				goto Timeout;
+			}
+#endif
 		}
 		pthread_spin_unlock(&trace->trace_lock);
 #endif 
@@ -658,6 +700,37 @@ Timeout:
 }
 #endif 
 
+long long get_total_bytes(int nr_trace, int nr_thread){
+	struct io_stat_t total_stat;
+	int i, j;
+	int per_thread = nr_thread / nr_trace;
+	
+	memset(&total_stat, 0x00, sizeof(struct io_stat_t));
+	for(i = 0;i < nr_trace;i++){
+		struct io_stat_t io_stat_dst;
+		struct trace_info_t *trace = &traces[i];
+		memset(&io_stat_dst, 0x00, sizeof(struct io_stat_t));
+
+		for(j = 0;j < per_thread;j++){
+			int th_num = i * per_thread + j;
+			struct io_stat_t *io_stat_src = &th_info[th_num].io_stat;
+
+			pthread_spin_lock(&io_stat_src->stat_lock);
+
+			io_stat_dst.total_bytes+= io_stat_src->total_bytes;
+			io_stat_dst.total_rbytes+= io_stat_src->total_rbytes;
+			io_stat_dst.total_wbytes+= io_stat_src->total_wbytes;
+
+			pthread_spin_unlock(&io_stat_src->stat_lock);
+		}
+
+		total_stat.total_bytes += io_stat_dst.total_bytes;
+		total_stat.total_rbytes += io_stat_dst.total_rbytes;
+		total_stat.total_wbytes += io_stat_dst.total_wbytes;
+	}
+
+	return total_stat.total_bytes;
+}
 
 int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 	struct io_stat_t total_stat;
@@ -726,6 +799,10 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			fprintf(fp, " Trace name = %s \n", traces[i].tracename);
 			io_stat_dst.execution_time = io_stat_dst.execution_time/per_thread;
 			fprintf(fp, " Execution time = %f sec\n", io_stat_dst.execution_time);
+			if(traces[i].synthetic){
+				fprintf(fp, " Synthetic workload \n");
+				fprintf(fp, " utilization = %d \n", traces[i].utilization);
+			}
 
 			mean = (double)io_stat_dst.latency_sum/io_stat_dst.latency_count;
 			sum_sqr = io_stat_dst.latency_sum_sqr;
@@ -810,6 +887,15 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs  \r",
 					execution_time, timeout-execution_time,
 					avg_bw, latency, avg_time_diff);
+		}else if(wanted_io_count){
+			long long remaining_bytes = wanted_io_count*PAGE_SIZE - total_stat.total_bytes;
+			double remaining_time = remaining_bytes / MB / avg_bw;
+
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs \r",
+					execution_time, 
+					remaining_time,
+					(double)remaining_bytes / (wanted_io_count * PAGE_SIZE) * 100,
+					avg_bw, latency, avg_time_diff);
 		}else{
 			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs \r",
 					execution_time, 
@@ -837,9 +923,15 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 
 void usage_help(){
 	printf("\n Invalid command!!\n");
-	printf(" Usage:\n");
+	printf(" Usage:\n\n");
+	printf(" 1. Using Real Trace \n");
 	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 timescale1 tracefile2 timescale2 ...\n");
 	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 trace.dat 0.5\n\n");
+
+	printf(" 2. Using Synthetic Workload \n");
+	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat rand utilization ...\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 rand 10\n\n");
+	
 }
 
 void finalize(){
@@ -870,6 +962,7 @@ int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 	struct trace_io_req* io;	
 	int start;
 	int i, j;
+
 	if(trace->trace_buf_size <= trace->trace_io_cnt){
 		trace->trace_buf_size *=2;
 		trace->trace_buf = realloc(trace->trace_buf, sizeof(struct trace_io_req) * trace->trace_buf_size);
@@ -896,12 +989,9 @@ int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 					(trace->trace_buf[i]).bcount -= 8;
 					break;
 				}
-
-
 			}
 		}
 	}
-
 
 	trace->trace_io_cnt++;
 	return 0;
@@ -935,6 +1025,62 @@ void main_worker(){
 	printf(" main worker has been finished ... \n");
 
 }
+
+void synthetic_mix(struct trace_info_t *trace){
+	int i;
+	// swap blknos
+	for(i = 0;i < trace->trace_io_cnt;i++){
+		struct trace_io_req *req1, *req2; 
+		int blkno;
+		int j = i;
+
+		req1 = &trace->trace_buf[i];
+		while(j==i){
+			j = RND(trace->trace_io_cnt);
+		}
+		req2 = &trace->trace_buf[j];
+
+		blkno = req1->blkno;
+		req1->blkno = req2->blkno;
+		req2->blkno = blkno;
+	}
+
+}
+
+void synthetic_gen(struct trace_info_t *trace){
+	int i;
+	struct trace_io_req *trace_buf_temp;
+
+	trace->trace_io_cnt = trace->total_pages/100*trace->utilization;
+	trace->trace_io_cur = 0;
+	trace->trace_timescale = 0.0;
+
+	trace->trace_buf = malloc(sizeof(struct trace_io_req) * trace->trace_io_cnt);
+
+	for(i = 0;i < trace->trace_io_cnt;i++){
+		struct trace_io_req *req = &trace->trace_buf[i];
+		req->arrival_time = i * 1.0;
+		req->devno = 0;
+	//	req->blkno = RND(trace->trace_io_cnt) * SPP; 
+		req->blkno = i * SPP; 
+		req->bcount = SPP;
+		req->flags = 0;
+	}
+
+	synthetic_mix(trace);
+
+
+#if 0 
+	for(i = 0;i < 10 && i < trace->trace_io_cnt;i++){
+		struct trace_io_req *req = &trace->trace_buf[i];
+		printf(" %d, blkno = %d \n", i, req->blkno);
+	}
+	
+	printf(" synthetic_gen: generating %dMB random I/Os\n",
+			trace->trace_io_cnt/256);
+#endif
+}
+
 
 int main(int argc, char **argv){
 	pthread_t threads[MAX_THREADS];
@@ -1011,25 +1157,7 @@ int main(int argc, char **argv){
 		struct trace_info_t *trace = &traces[i];
 		int fd;
 
-	//	t_info->trace = trace;
-
-		trace->trace_buf_size = 1024;		
-		trace->trace_buf = malloc(sizeof(struct trace_io_req) * 1024);
-		trace->trace_io_cnt = 0;
-		trace->trace_io_cur = 0;
-		trace->trace_timescale = atof(argv[argc_offset+i*2+1]);
-		trace->trace_fp = fopen(argv[argc_offset+i*2], "r");
-		if(trace->trace_fp == NULL){
-			printf("file open error %s\n", argv[argc_offset+i*2]);
-			return -1;
-		}
-		while(1){
-			if (fgets(line, 200, trace->trace_fp) == NULL) {
-				break;
-			}
-			if(trace_io_put(line, trace, qdepth))
-				continue;
-		}
+		memset(trace, 0x00, sizeof(struct trace_info_t));
 
 		strcpy(trace->tracename, argv[argc_offset+i*2]);
 		strcpy(trace->filename, argv[ARG_DEV]);
@@ -1052,6 +1180,38 @@ int main(int argc, char **argv){
 		trace->trace_repeat_count = 1;
 		trace->trace_repeat_num = repeat;
 
+		// synthetic workload 
+		if(!strcmp(argv[argc_offset+i*2], "rand")){
+			trace->synthetic = 1;
+			trace->utilization = atoi(argv[argc_offset+i*2+1]);
+			if(trace->utilization <=0 || trace->utilization >= 99){
+				printf(" Invalid utilization value = %d \n", trace->utilization);
+				return -1;
+			}
+			trace->wanted_io_count = trace->total_pages * 2 ;
+			wanted_io_count = trace->wanted_io_count;
+			synthetic_gen(trace);
+		}else{
+			trace->trace_buf_size = 1024;		
+			trace->trace_buf = malloc(sizeof(struct trace_io_req) * 1024);
+			trace->trace_io_cnt = 0;
+			trace->trace_io_cur = 0;
+			trace->trace_timescale = atof(argv[argc_offset+i*2+1]);
+
+			trace->trace_fp = fopen(argv[argc_offset+i*2], "r");
+			if(trace->trace_fp == NULL){
+				printf("file open error %s\n", argv[argc_offset+i*2]);
+				return -1;
+			}
+
+			while(1){
+				if (fgets(line, 200, trace->trace_fp) == NULL) {
+					break;
+				}
+				if(trace_io_put(line, trace, qdepth))
+					continue;
+			}
+		}
 
 		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)i,
 				(double)trace->start_partition/1024/1024/1024, (double)trace->total_capacity/1024/1024/1024
@@ -1143,7 +1303,9 @@ int main(int argc, char **argv){
 
 	for(t=0;t<nr_trace;t++){
 		pthread_spin_destroy(&traces[i].trace_lock);
-		fclose(traces[t].trace_fp);
+		if(!traces[t].synthetic){
+			fclose(traces[t].trace_fp);
+		}
 		disk_close(traces[t].fd);
 	}
 
