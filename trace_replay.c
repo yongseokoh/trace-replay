@@ -870,6 +870,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		double avg_time_diff;
 		double period_time;
 		struct timeval cur_tv;
+		static unsigned long long total_bytes;
 
 		gettimeofday(&cur_tv, NULL);
 		period_time = time_since(&tv_end, &cur_tv);
@@ -884,28 +885,36 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		avg_time_diff = (double)total_stat.time_diff / total_stat.time_diff_cnt / 1000;
 
 		if(timeout){
-			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs  \r",
+			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
 					execution_time, timeout-execution_time,
 					avg_bw, latency, avg_time_diff);
 		}else if(wanted_io_count){
 			long long remaining_bytes = wanted_io_count*PAGE_SIZE - total_stat.total_bytes;
 			double remaining_time = remaining_bytes / MB / avg_bw;
 
-			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs \r",
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
 					execution_time, 
 					remaining_time,
 					(double)remaining_bytes / (wanted_io_count * PAGE_SIZE) * 100,
 					avg_bw, latency, avg_time_diff);
 		}else{
-			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs \r",
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
 					execution_time, 
 					execution_time/progress_percent*100-execution_time, 
 					(double)100-progress_percent,
 					avg_bw, latency, avg_time_diff);
 		}
-		//printf(" %f %llu\n", execution_time, total_bytes);
+
+		if(total_bytes<total_stat.total_bytes){
+			total_bytes = total_stat.total_bytes;
+		}else{
+			printf(" No Response ");
+		}
+		printf("\r");
+
 		if(log_count==0)
 			fprintf( log_fp, "#ExecTime\tAvgBW\tCurBw\n");
+
 
 		fprintf( log_fp, "%f\t%f\t%f\n", execution_time, avg_bw, cur_bw);
 		log_count++;
