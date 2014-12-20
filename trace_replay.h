@@ -35,6 +35,8 @@
 #define SPP (PAGE_SIZE/SECTOR_SIZE)
 #define MAX_BYTES (4*1024*1024)
 
+#define PAGE_TO_MB(x) (x*PAGE_SIZE/MB)
+
 struct io_stat_t{
 	pthread_spinlock_t stat_lock;
 	double latency_sum;
@@ -83,7 +85,10 @@ struct trace_info_t{
 	int fd;
 	int synthetic;
 	long long wanted_io_count;
-	int utilization;
+	int utilization; // % Percent 
+	int working_set_size; // in MB
+	int working_set_pages; // in pages
+
 
 	int trace_repeat_count;
 	int trace_repeat_num;
