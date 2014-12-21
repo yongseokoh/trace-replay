@@ -24,6 +24,7 @@
 
 #define USE_MAINWORKER 0
 
+#define KB (1024)
 #define MB (1024*1024)
 #define GB (1024*1024*1024)
 #define MAX_QDEPTH (128*16)
@@ -88,6 +89,8 @@ struct trace_info_t{
 	int utilization; // % Percent 
 	int working_set_size; // in MB
 	int working_set_pages; // in pages
+	int io_size; // in bytes
+	int io_pages; // in pages
 
 
 	int trace_repeat_count;
