@@ -1028,24 +1028,29 @@ void main_worker(){
 }
 
 void synthetic_mix(struct trace_info_t *trace){
-	int i;
-	// swap blknos
-	for(i = 0;i < trace->trace_io_cnt;i++){
-		struct trace_io_req *req1, *req2; 
-		int blkno;
-		int j = i;
+	int i, k;
+	struct timeval cur_tv;
 
-		req1 = &trace->trace_buf[i];
-		while(j==i){
-			j = RND(trace->trace_io_cnt);
+	gettimeofday(&cur_tv, NULL);
+
+	for(k = 0;k < RND(cur_tv.tv_sec%128);k++){
+		// swap blknos
+		for(i = 0;i < trace->trace_io_cnt;i++){
+			struct trace_io_req *req1, *req2; 
+			int blkno;
+			int j = i;
+
+			req1 = &trace->trace_buf[i];
+			while(j==i){
+				j = RND(trace->trace_io_cnt);
+			}
+			req2 = &trace->trace_buf[j];
+
+			blkno = req1->blkno;
+			req1->blkno = req2->blkno;
+			req2->blkno = blkno;
 		}
-		req2 = &trace->trace_buf[j];
-
-		blkno = req1->blkno;
-		req1->blkno = req2->blkno;
-		req2->blkno = blkno;
 	}
-
 }
 
 void synthetic_gen(struct trace_info_t *trace){
@@ -1267,7 +1272,7 @@ int main(int argc, char **argv){
 				usage_help();
 				return 0;
 			}
-			printf(" io size = %dKB\n", (int)trace->io_size);
+			printf(" io size = %dKB\n", (int)trace->io_size/KB);
 
 		}else{
 			trace->trace_buf_size = 1024;		
