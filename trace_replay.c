@@ -273,7 +273,7 @@ int trace_set_eof(struct trace_info_t *trace){
 	trace->trace_io_issue_count = trace->wanted_io_count;
 	pthread_spin_unlock(&trace->trace_lock);
 
-	printf(" set eof ... \n");
+	//printf(" set eof ... \n");
 	return res;
 }
 
@@ -289,8 +289,8 @@ int trace_eof(struct trace_info_t *trace){
 	}
 	pthread_spin_unlock(&trace->trace_lock);
 
-	if(res)
-		printf(" eof ... \n");
+	//if(res)
+	//	printf(" eof ... \n");
 	return res;
 }
 
@@ -683,7 +683,7 @@ Timeout:
 
 	gettimeofday(&io_stat->end_time, NULL);
 	io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
-	printf(" Finalizing thread %d ... %s\n", (int)tid, trace->tracename);
+	//printf(" Finalizing thread %d ... %s\n", (int)tid, trace->tracename);
 
 	pthread_mutex_lock(&t_info->mutex);
 	t_info->done = 1;
@@ -887,24 +887,24 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		}
 
 		if(timeout){
-			printf(" time = %.0fs (remaining = %.0fs) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
+			printf(" time = %.0fs (remaining = %.0fs) avgbw = %.3fMB/s curbs = %.3fMB/s Lat = %.6fs, time_diff = %.6fs ",
 					execution_time, timeout-execution_time,
-					avg_bw, latency, avg_time_diff);
+					avg_bw, cur_bw, latency, avg_time_diff);
 		}else if(wanted_io_count){
 			long long remaining_bytes = wanted_io_count * io_size - total_stat.total_bytes;
 			double remaining_time = remaining_bytes / MB / avg_bw;
 
-			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) avgbw = %.3f curbw = %.3fMB/s Lat = %.6fs, time_diff = %.6fs ",
 					execution_time, 
 					remaining_time,
 					(double)remaining_bytes / (wanted_io_count * io_size) * 100,
-					avg_bw, latency, avg_time_diff);
+					avg_bw, cur_bw, latency, avg_time_diff);
 		}else{
-			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bandwidth = %.3fMB/s Latency = %.6fs, avg_time_diff = %.6fs ",
+			printf(" time = %.0fs (remaining = %.0fs %.0f%%) bw = %.3fMB/s curbw = %.3fMB/s Lat = %.6fs, time_diff = %.6fs ",
 					execution_time, 
 					execution_time/progress_percent*100-execution_time, 
 					(double)100-progress_percent,
-					avg_bw, latency, avg_time_diff);
+					avg_bw, cur_bw, latency, avg_time_diff);
 		}
 
 		printf("\r");
@@ -931,8 +931,8 @@ void usage_help(){
 	printf("\n Invalid command!!\n");
 	printf(" Usage:\n\n");
 	printf(" 1. Using Real Trace \n");
-	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 timescale1 wss tracefile2 timescale2 wss ...\n");
-	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 0 trace.dat 0.5 0 0\n\n");
+	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat devicefile tracefile1 timescale1 0 0 tracefile2 timescale2 0 0 ...\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 0 0 trace.dat 0.5 0 0\n\n");
 
 	printf(" 2. Using Synthetic Workload \n");
 	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat rand wss utilization iosize \n");
