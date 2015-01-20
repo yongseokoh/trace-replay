@@ -57,6 +57,7 @@ long long wanted_io_count;
 unsigned long genrand();
 #define RND(x) ((x>0)?(genrand() % (x)):0)
 
+char *g_buf;
 
 int timeval_subtract (result, x, y)
  struct timeval *result, *x, *y;
@@ -271,9 +272,10 @@ int trace_set_eof(struct trace_info_t *trace){
 	pthread_spin_lock(&trace->trace_lock);
 	trace->trace_io_cur = trace->trace_io_cnt;
 	trace->trace_io_issue_count = trace->wanted_io_count;
+	trace->timeout = 0;
 	pthread_spin_unlock(&trace->trace_lock);
 
-	//printf(" set eof ... \n");
+	printf(" set eof ... \n");
 	return res;
 }
 
@@ -289,8 +291,8 @@ int trace_eof(struct trace_info_t *trace){
 	}
 	pthread_spin_unlock(&trace->trace_lock);
 
-	//if(res)
-	//	printf(" eof ... \n");
+	if(res)
+		printf(" eof ... \n");
 	return res;
 }
 
@@ -298,16 +300,22 @@ int trace_eof(struct trace_info_t *trace){
 int try_trace_reset(struct trace_info_t *trace, struct io_stat_t *io_stat){
 	int res = 0;
 	if(trace->timeout && io_stat->execution_time < trace->timeout){
-		trace_reset(trace);
 		trace->trace_repeat_count++;
-	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
 		trace_reset(trace);
 		synthetic_mix(trace);
+		printf(" trace reset timeout ... %f %f \n", trace->timeout, io_stat->execution_time);
+	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
 		trace->trace_repeat_count++;
+		trace_reset(trace);
+		synthetic_mix(trace);
+		printf(" trace reset wanted io ... \n");
+	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
 		//printf(" repeat trace file thread\n");
 	}else if(trace->trace_repeat_num && trace->trace_repeat_count < trace->trace_repeat_num) {
-		trace_reset(trace);
 		trace->trace_repeat_count++;
+		trace_reset(trace);
+		synthetic_mix(trace);
+		printf(" trace reset repeat num... \n");
 		//printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
 	}else{
 		res = -1;
@@ -323,8 +331,8 @@ int trace_io_get(double* arrival_time, int* devno, int* blkno, int*bcount, int* 
 
 	io = &(trace->trace_buf[trace->trace_io_cur]);
 
-	if(trace->wanted_io_count && trace->trace_io_issue_count>=trace->wanted_io_count){
-		res = -1;
+	if(trace->timeout==0.0 && trace->wanted_io_count && trace->trace_io_issue_count>=trace->wanted_io_count){
+		res = try_trace_reset(trace, io_stat);
 	}else if(trace->trace_io_cur>=trace->trace_io_cnt){
 		res = try_trace_reset(trace, io_stat);
 	}
@@ -428,8 +436,6 @@ int make_jobs(struct thread_info_t *t_info, struct iocb **ioq, struct io_job **j
 out:
 		//printf( "%d: %lf %d %d %d %x\n", i, arrival_time, devno, blkno, bcount, flags);
 		job->buf = allocate_aligned_buffer(job->bytes);
-		//job->buf = t_info->th_buf[t_info->buf_cur];
-		//t_info->buf_cur = (t_info->buf_cur+1)%t_info->queue_depth;
 
 		gettimeofday(&job->start_time, NULL);
 
@@ -448,10 +454,18 @@ out:
 		io_stat->time_diff += tmp;
 		io_stat->time_diff_cnt++;
 		pthread_spin_unlock(&io_stat->stat_lock);
+#if 1
 		if(job->rw)
 			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 		else
 			io_prep_pwrite(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
+#else
+		if(job->rw)
+			io_prep_pread(&job->iocb, t_info->fd, g_buf, job->bytes, job->offset);
+		else
+			io_prep_pwrite(&job->iocb, t_info->fd, g_buf, job->bytes, job->offset);
+
+#endif
 
 		//if(job->offset/1024/1024/1024 > 500)
 		//	printf(" mod: offset = %fGB\n", (double)job->offset/1024/1024/1024);
@@ -636,22 +650,27 @@ void *sub_worker(void *threadid)
 			if( t_info->queue_count == 0)
 				wait_arrive(t_info);
 		}
-		iter++;
-		if(iter>100){
+		//iter++;
+		//if(iter>1){
 			gettimeofday(&io_stat->end_time, NULL);
 			io_stat->execution_time = time_since(&io_stat->start_time, &io_stat->end_time);
-			if(io_stat->execution_time >trace->timeout && trace->timeout>0.0){
+			if(io_stat->execution_time>trace->timeout && trace->timeout>0.0){
+				//printf(" time out 0... \n");
 				goto Timeout;
 			}
-			iter=0;
-		}
+		//	iter=0;
+		//}
 
 #if 1 
 check_timeout:
-
+		if(trace->timeout && io_stat->execution_time > trace->timeout){
+			//printf(" time out 1... \n");
+			goto Timeout;
+		}
 		//if(feof(t_info->trace_fp)){
 		pthread_spin_lock(&trace->trace_lock);
-		if(trace->trace_io_cur>=trace->trace_io_cnt){
+		if(trace->trace_io_cur>=trace->trace_io_cnt 
+				){
 #if 0 
 			if(trace->timeout && io_stat->execution_time < trace->timeout){
 				trace_reset(trace);
@@ -887,7 +906,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		}
 
 		if(timeout){
-			printf(" time = %.0fs (remaining = %.0fs) avgbw = %.3fMB/s curbs = %.3fMB/s Lat = %.6fs, time_diff = %.6fs ",
+			printf(" time = %.0fs (remaining = %.0fs) avgbw = %.3fMB/s curbw = %.3fMB/s Lat = %.6fs, time_diff = %.6fs ",
 					execution_time, timeout-execution_time,
 					avg_bw, cur_bw, latency, avg_time_diff);
 		}else if(wanted_io_count){
@@ -1031,25 +1050,34 @@ void synthetic_mix(struct trace_info_t *trace){
 	int i, k;
 	struct timeval cur_tv;
 
+	if(!trace->synthetic)
+		return;
+
 	gettimeofday(&cur_tv, NULL);
+	//if(trace->trace_repeat_count==1){
+		sgenrand(cur_tv.tv_sec);
+		printf(" rand = %d, repeat = %d \n", RND(trace->trace_io_cnt), trace->trace_repeat_count);
+	//}
 
-	for(k = 0;k < RND(cur_tv.tv_sec%128);k++){
-		// swap blknos
-		for(i = 0;i < trace->trace_io_cnt;i++){
-			struct trace_io_req *req1, *req2; 
-			int blkno;
-			int j = i;
+	for(i = 0;i < trace->trace_io_cnt;i++){
+		struct trace_io_req *req1, *req2; 
+		int blkno;
+		int j = i;
 
-			req1 = &trace->trace_buf[i];
-			while(j==i){
-				j = RND(trace->trace_io_cnt);
-			}
-			req2 = &trace->trace_buf[j];
+		req1 = &trace->trace_buf[i];
+	//	if(trace->trace_repeat_count>1){
+	//		req1->blkno = RND(trace->trace_io_cnt);
+	//		continue;
+	//	}
 
-			blkno = req1->blkno;
-			req1->blkno = req2->blkno;
-			req2->blkno = blkno;
+		while(j==i){
+			j = RND(trace->trace_io_cnt);
 		}
+		req2 = &trace->trace_buf[j];
+
+		blkno = req1->blkno;
+		req1->blkno = req2->blkno;
+		req2->blkno = blkno;
 	}
 }
 
@@ -1135,6 +1163,24 @@ void sig_handler(int signum)
 
 	signal( SIGINT, SIG_DFL);
 	exit(0);
+}
+	
+void fill_rand_buf(){
+	int i;
+
+	g_buf = allocate_aligned_buffer(io_size);
+	if(g_buf==NULL){
+		printf(" Malloc error \n");
+		exit(0);
+	}
+
+	for(i = 0;i < io_size;i+=sizeof(int)){
+		int *p = &g_buf[i];
+		*p = RND(io_size);
+		if(i <= 12)
+			printf(" %u %u\n", *p, io_size);
+	}
+
 }
 
 
@@ -1242,9 +1288,18 @@ int main(int argc, char **argv){
 
 			trace->io_size = atoi(argv[argc_offset+i*EXT_ARG_NUM+3]); // KB
 			trace->io_size *= KB;
+
+			if(trace->io_size>MAX_BYTES){
+				printf(" io size cannot be greater than %dKB\n", MAX_BYTES/KB);
+				return -1;
+			}
+
 			if(trace->io_size==0)
 				trace->io_size = 4096;
 			io_size = trace->io_size;
+
+			fill_rand_buf();
+
 			trace->io_pages = trace->io_size/PAGE_SIZE;
 			trace->working_set_size = atoi(argv[argc_offset+i*EXT_ARG_NUM+1]);
 			trace->working_set_size =(int)((long long)trace->working_set_size*MB/io_size*io_size/MB);
@@ -1294,6 +1349,7 @@ int main(int argc, char **argv){
 				if(trace_io_put(line, trace, qdepth))
 					continue;
 			}
+			//printf(" trace io cnt = %d \n", trace->trace_io_cnt);
 		}
 
 		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)i,

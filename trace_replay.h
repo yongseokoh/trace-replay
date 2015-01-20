@@ -34,7 +34,7 @@
 #define PAGE_SIZE 4096
 #define SECTOR_SIZE 512
 #define SPP (PAGE_SIZE/SECTOR_SIZE)
-#define MAX_BYTES (4*1024*1024)
+#define MAX_BYTES (1024*1024*1024)
 
 #define PAGE_TO_MB(x) (x*PAGE_SIZE/MB)
 
