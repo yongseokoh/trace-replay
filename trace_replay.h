@@ -92,6 +92,9 @@ struct trace_info_t{
 	int io_size; // in bytes
 	int io_pages; // in pages
 
+	int synth_read;
+	int synth_write;
+	int synth_mixed;
 
 	int trace_repeat_count;
 	int trace_repeat_num;

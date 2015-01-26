@@ -54,10 +54,16 @@ struct timeval tv_start, tv_end, tv_result,tv_start2;
 double execution_time = 0.0;
 double timeout;
 long long wanted_io_count;
+
+void sgenrand(unsigned long seed);
 unsigned long genrand();
 #define RND(x) ((x>0)?(genrand() % (x)):0)
 
+//#define USE_RAND_BUF
+
+#ifdef USE_RAND_BUF
 char *g_buf;
+#endif 
 
 int timeval_subtract (result, x, y)
  struct timeval *result, *x, *y;
@@ -454,7 +460,7 @@ out:
 		io_stat->time_diff += tmp;
 		io_stat->time_diff_cnt++;
 		pthread_spin_unlock(&io_stat->stat_lock);
-#if 1
+#ifndef USE_RAND_BUF
 		if(job->rw)
 			io_prep_pread(&job->iocb, t_info->fd, job->buf, job->bytes, job->offset);
 		else
@@ -1054,30 +1060,30 @@ void synthetic_mix(struct trace_info_t *trace){
 		return;
 
 	gettimeofday(&cur_tv, NULL);
-	//if(trace->trace_repeat_count==1){
-		sgenrand(cur_tv.tv_sec);
-		printf(" rand = %d, repeat = %d \n", RND(trace->trace_io_cnt), trace->trace_repeat_count);
-	//}
+	sgenrand(cur_tv.tv_sec);
+	//printf(" rand = %d, repeat = %d \n", RND(trace->trace_io_cnt), trace->trace_repeat_count);
 
 	for(i = 0;i < trace->trace_io_cnt;i++){
 		struct trace_io_req *req1, *req2; 
+		struct trace_io_req temp; 
 		int blkno;
 		int j = i;
 
 		req1 = &trace->trace_buf[i];
-	//	if(trace->trace_repeat_count>1){
-	//		req1->blkno = RND(trace->trace_io_cnt);
-	//		continue;
-	//	}
-
 		while(j==i){
 			j = RND(trace->trace_io_cnt);
 		}
 		req2 = &trace->trace_buf[j];
 
+#if 0
 		blkno = req1->blkno;
 		req1->blkno = req2->blkno;
 		req2->blkno = blkno;
+#else
+		memcpy(&temp, req1, sizeof(struct trace_io_req));
+		memcpy(req1, req2, sizeof(struct trace_io_req));
+		memcpy(req2, &temp, sizeof(struct trace_io_req));
+#endif 
 	}
 }
 
@@ -1098,7 +1104,17 @@ void synthetic_gen(struct trace_info_t *trace){
 		req->devno = 0;
 		req->blkno = i * trace->io_pages * SPP; 
 		req->bcount = trace->io_pages * SPP;
-		req->flags = 0;
+
+		if(trace->synth_write)
+			req->flags = 0;
+		else if(trace->synth_read)
+			req->flags = 1;
+		else{
+			if(RND(100)<50)
+				req->flags = 0;
+			else
+				req->flags = 1;
+		}
 	}
 
 	synthetic_mix(trace);
@@ -1131,6 +1147,7 @@ int destroy(pthread_t *threads, int qdepth){
 			//printf("ERROR; return code from pthread_create( is %d\n", rc);
 			//exit(-1);
 		}
+		pthread_spin_destroy(&th_info[t].io_stat.stat_lock);
 		pthread_mutex_destroy(&th_info[t].mutex);
 		pthread_cond_destroy(&th_info[t].cond_sub);
 		pthread_cond_destroy(&th_info[t].cond_main);
@@ -1165,6 +1182,7 @@ void sig_handler(int signum)
 	exit(0);
 }
 	
+#ifdef USE_RAND_BUF
 void fill_rand_buf(){
 	int i;
 
@@ -1182,6 +1200,7 @@ void fill_rand_buf(){
 	}
 
 }
+#endif 
 
 
 #define EXT_ARG_NUM 4
@@ -1283,8 +1302,30 @@ int main(int argc, char **argv){
 		trace->trace_repeat_num = repeat;
 
 		// synthetic workload 
-		if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand")){
+		if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_write")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_read")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_mixed")
+		){
+
 			trace->synthetic = 1;
+			trace->synth_write = 1;
+			trace->synth_read = 0;
+			trace->synth_mixed = 0;
+
+			if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_write")){
+				trace->synth_write = 1;
+				trace->synth_read = 0;
+				trace->synth_mixed = 0;
+			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_read")){
+				trace->synth_write = 0;
+				trace->synth_read = 1;
+				trace->synth_mixed = 0;
+			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_mixed")){
+				trace->synth_write = 0;
+				trace->synth_read = 0;
+				trace->synth_mixed = 1;
+			}
 
 			trace->io_size = atoi(argv[argc_offset+i*EXT_ARG_NUM+3]); // KB
 			trace->io_size *= KB;
@@ -1298,7 +1339,9 @@ int main(int argc, char **argv){
 				trace->io_size = 4096;
 			io_size = trace->io_size;
 
+#ifdef USE_RAND_BUF
 			fill_rand_buf();
+#endif 
 
 			trace->io_pages = trace->io_size/PAGE_SIZE;
 			trace->working_set_size = atoi(argv[argc_offset+i*EXT_ARG_NUM+1]);
