@@ -445,8 +445,8 @@ out:
 
 		gettimeofday(&job->start_time, NULL);
 
-		if(job->offset/1024/1024/1024 > 500)
-			printf(" org: offset = %fGB\n", (double)job->offset/1024/1024/1024);
+		//if(job->offset/1024/1024/1024 > 500)
+		//	printf(" org: offset = %fGB\n", (double)job->offset/1024/1024/1024);
 
 		job->offset += trace->start_partition;
 		ioq[cnt] = &job->iocb;
@@ -838,6 +838,11 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			fprintf(fp, " Total traffic = %f MB\n", (double)io_stat_dst.total_bytes/MB);
 			fprintf(fp, " Read traffic = %f MB\n", (double)io_stat_dst.total_rbytes/MB);
 			fprintf(fp, " Write traffic = %f MB\n", (double)io_stat_dst.total_wbytes/MB);
+
+			fprintf(fp, " Avg Request Size Total = %f KB\n", (double)io_stat_dst.total_bytes/io_stat_dst.latency_count/KB);
+			fprintf(fp, " Avg Request Size Read = %f KB\n", (double)io_stat_dst.total_rbytes/io_stat_dst.latency_count/KB);
+			fprintf(fp, " Avg Request Size Write = %f KB\n", (double)io_stat_dst.total_wbytes/io_stat_dst.latency_count/KB);
+
 			fprintf(fp, " Trace reset count = %d\n", trace->trace_repeat_count);
 		}
 
@@ -884,6 +889,11 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_stat.total_bytes/MB);
 		fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_stat.total_rbytes/MB);
 		fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_stat.total_wbytes/MB);
+
+		fprintf(fp, " Agg Avg Request Size Total = %f KB\n", (double)total_stat.total_bytes/total_stat.latency_count/KB);
+		fprintf(fp, " Agg Avg Request Size Read = %f KB\n", (double)total_stat.total_rbytes/total_stat.latency_count/KB);
+		fprintf(fp, " Agg Avg Request Size Write = %f KB\n", (double)total_stat.total_wbytes/total_stat.latency_count/KB);
+
 		fflush(fp);
 	}else{
 		double avg_bw, cur_bw;
@@ -982,8 +992,89 @@ void finalize(){
 }
 
 
+#if 1 // ej ver  
+int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
+	struct trace_io_req* io;	
+	struct trace_io_req* new_io;	
+	int start;
+	int i, j, k;
+	double arrival_time;
+	int devno;
+	int blkno;
+	int bcount;
+	int flags;
 
+	if(trace->trace_buf_size <= trace->trace_io_cnt){
+		trace->trace_buf_size *=2;
+		trace->trace_buf = realloc(trace->trace_buf, sizeof(struct trace_io_req) * trace->trace_buf_size);
+	}
+AAA:
+	if (sscanf(line, "%lf %d %d %d %x\n", &arrival_time, &devno, &blkno, &bcount, &flags) != 5) {
+		fprintf(stderr, "Wrong number of arguments for I/O trace event type\n");
+		fprintf(stderr, "line: %s", line);
+		return -1;
+	}
+	start = (trace->trace_io_cnt - qdepth * nr_thread > 0)? trace->trace_io_cnt - qdepth*nr_thread : 0;
+	for( i = start; i < trace->trace_io_cnt; i++ ){
+		io = &trace->trace_buf[i];
 
+		if( io->devno ==  devno){
+			if(blkno < io->blkno && (blkno + bcount) > io->blkno && (blkno +bcount) < (io->blkno+io->bcount) ){	
+				//printf( "Pending case 1\n");
+				bcount = io->blkno - blkno; 
+			}
+			else if( blkno <= io->blkno && (blkno + bcount) >= (io->blkno + io->bcount)){
+				//printf( "Pending case 2 : %d %d : %d %d\n",blkno,bcount,io->blkno,io->bcount);
+				io->blkno = blkno;
+				io->bcount = bcount;
+				if (fgets(line, 200, trace->trace_fp) == NULL) {
+					return -1;
+				}
+				goto AAA;
+			}
+			else if( blkno >= io->blkno && (blkno + bcount) <= (io->blkno+ io->bcount)){
+				//printf( "Pending case 3\n");
+				if (fgets(line, 200, trace->trace_fp) == NULL) {
+					return -1;
+				}
+				goto AAA;
+			}
+			else if( blkno > io->blkno && blkno < (io->blkno + io->bcount) && (blkno + bcount) > (io->blkno + io->bcount)){
+				//printf("Pending case 4\n");
+				bcount = bcount - (io->blkno + io->bcount - blkno);
+				blkno = io->blkno + io->bcount;
+
+			}
+		}
+		//printf("i:%d\n",i);
+	}
+	//printf("%lf %d %d\n", arrival_time, blkno, bcount);
+	new_io = &trace->trace_buf[trace->trace_io_cnt];
+	new_io->arrival_time = arrival_time;
+	new_io->devno = devno;
+	new_io->bcount = bcount;
+	new_io->blkno = blkno;	
+	new_io->flags = flags;	
+	trace->trace_io_cnt++;
+#if 0	
+	start = (trace->trace_io_cnt - qdepth * nr_thread > 0)? trace->trace_io_cnt - qdepth*nr_thread : 0;
+	for( i = start; i < trace->trace_io_cnt-1; i++ ){
+		io = &trace->trace_buf[i];
+		for( j=0; j < io->bcount;j++){
+			for( k=0; k < bcount;k++){
+				if(blkno+k == io->blkno+j){
+					printf("%lf %d %d pending !!!\n",arrival_time,blkno,bcount);	
+					exit(0);
+				}
+			}
+		}
+	}
+
+#endif
+	return 0;
+	
+}
+#else 
 int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 	struct trace_io_req* io;	
 	int start;
@@ -1022,6 +1113,7 @@ int trace_io_put(char* line, struct trace_info_t* trace, int qdepth){
 	trace->trace_io_cnt++;
 	return 0;
 }
+#endif
 
 void main_worker(){
 	struct thread_info_t *t_info;
@@ -1202,9 +1294,29 @@ void fill_rand_buf(){
 }
 #endif 
 
+void *trace_loader(void *data)
+{
+	struct trace_info_t *trace = (struct trace_info_t *)data;
+	char line[201];
+
+	//printf(" Trace Loader = %s starting \n", trace->tracename);
+	while(1){
+		if (fgets(line, 200, trace->trace_fp) == NULL) {
+			break;
+		}
+		if(trace_io_put(line, trace, qdepth))
+			continue;
+	}
+	//printf(" Trace Loader = %s ending \n", trace->tracename);
+
+	return NULL;
+}
+
+
 
 #define EXT_ARG_NUM 4
 int main(int argc, char **argv){
+	pthread_t trace_loader_thread[MAX_THREADS];
 	pthread_attr_t attr;
 	int rc;
 	int i;
@@ -1379,12 +1491,21 @@ int main(int argc, char **argv){
 			trace->trace_io_cur = 0;
 			trace->trace_timescale = atof(argv[argc_offset+i*EXT_ARG_NUM+1]);
 
+
 			trace->trace_fp = fopen(argv[argc_offset+i*EXT_ARG_NUM], "r");
 			if(trace->trace_fp == NULL){
 				printf("file open error %s\n", argv[argc_offset+i*EXT_ARG_NUM]);
 				return -1;
 			}
 
+#define MULTITHREAD_LOADER
+#ifdef MULTITHREAD_LOADER
+			rc = pthread_create(&trace_loader_thread[i], NULL, trace_loader, (void *)trace);
+			if (rc){
+				printf("ERROR; return code from pthread_create( is %d\n", rc);
+				exit(-1);
+			}
+#else
 			while(1){
 				if (fgets(line, 200, trace->trace_fp) == NULL) {
 					break;
@@ -1392,7 +1513,8 @@ int main(int argc, char **argv){
 				if(trace_io_put(line, trace, qdepth))
 					continue;
 			}
-			//printf(" trace io cnt = %d \n", trace->trace_io_cnt);
+			printf(" %s trace (io cnt = %d) has been loaded. \n", argv[argc_offset+i*EXT_ARG_NUM], trace->trace_io_cnt);
+#endif 
 		}
 
 		fprintf(result_fp, " %d thread start part = %fGB size = %fGB (%llu, %llu pages)\n", (int)i,
@@ -1400,6 +1522,13 @@ int main(int argc, char **argv){
 				, trace->start_page, trace->start_page + trace->total_pages);
 
 	}
+
+	//printf(" Wait for trace loader ... \n");
+#ifdef MULTITHREAD_LOADER
+	for(i=0;i<nr_trace;i++){
+		 pthread_join(trace_loader_thread[i], NULL);
+	}
+#endif 
 
 	for(t=0;t<nr_thread;t++){
 		struct thread_info_t *t_info = &th_info[t];
