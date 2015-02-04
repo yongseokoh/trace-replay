@@ -289,10 +289,13 @@ int trace_eof(struct trace_info_t *trace){
 	int res = 0;
 
 	pthread_spin_lock(&trace->trace_lock);
-	if(trace->trace_io_cur>=trace->trace_io_cnt){
+	if(trace->trace_io_cnt && trace->trace_io_cur>=trace->trace_io_cnt){
+		printf("trace->trace_io_cur>=trace->trace_io_cnt\n");
 		res = 1;
 	}
-	if(trace->trace_io_issue_count>=trace->wanted_io_count){
+	if(trace->wanted_io_count && trace->trace_io_issue_count>=trace->wanted_io_count){
+		printf("trace->trace_io_issue_count>=trace->wanted_io_count %d %d\n "
+				,trace->wanted_io_count,  trace->trace_io_issue_count);
 		res = 1;
 	}
 	pthread_spin_unlock(&trace->trace_lock);
@@ -547,7 +550,6 @@ void wait_arrive(struct thread_info_t *t_info){
 	
 	struct trace_info_t *trace = t_info->trace;
 
-
 	gettimeofday(&tv_now, NULL);
 	now = time_since_ms(&tv_start2, &tv_now);
 	
@@ -555,16 +557,36 @@ void wait_arrive(struct thread_info_t *t_info){
 	io = &(trace->trace_buf[trace->trace_io_cur]);
 
 	//printf("wait_arrive \n");
-	sleep_ms = io->arrival_time * trace->trace_timescale - now;
+	if(trace->timeout>0.0){
+		sleep_ms = io->arrival_time * trace->trace_timescale - now;
+		if(sleep_ms > trace->timeout*1000 - now){
+			sleep_ms = trace->timeout*1000 - now;
+		}
+	}else{
+		sleep_ms = io->arrival_time * trace->trace_timescale - now;
+	}
+
 	while(sleep_ms > 0)
 	{
 		//printf("sleep: %lf - %lf\n", io->arrival_time, now);
+		pthread_spin_unlock(&trace->trace_lock);
 		usleep(sleep_ms * 1000);
+		pthread_spin_lock(&trace->trace_lock);
 		gettimeofday(&tv_now, NULL);
 		now = time_since_ms(&tv_start2, &tv_now);
-		sleep_ms = io->arrival_time * trace->trace_timescale - now;
-		io = &(trace->trace_buf[trace->trace_io_cur]);
 
+		if(trace->timeout>0.0){
+			sleep_ms = io->arrival_time * trace->trace_timescale - now;
+			if(sleep_ms > trace->timeout*1000 - now){
+				sleep_ms = trace->timeout*1000 - now;
+			}
+		}else{
+			sleep_ms = io->arrival_time * trace->trace_timescale - now;
+		}
+
+		//sleep_ms = io->arrival_time * trace->trace_timescale - now;
+
+		io = &(trace->trace_buf[trace->trace_io_cur]);
 	}
 	pthread_spin_unlock(&trace->trace_lock);
 }
@@ -838,6 +860,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 			fprintf(fp, " Total traffic = %f MB\n", (double)io_stat_dst.total_bytes/MB);
 			fprintf(fp, " Read traffic = %f MB\n", (double)io_stat_dst.total_rbytes/MB);
 			fprintf(fp, " Write traffic = %f MB\n", (double)io_stat_dst.total_wbytes/MB);
+			fprintf(fp, " Read Ratio = %f \n", (double)io_stat_dst.total_wbytes/(double)io_stat_dst.total_bytes);
 
 			fprintf(fp, " Avg Request Size Total = %f KB\n", (double)io_stat_dst.total_bytes/io_stat_dst.latency_count/KB);
 			fprintf(fp, " Avg Request Size Read = %f KB\n", (double)io_stat_dst.total_rbytes/io_stat_dst.latency_count/KB);
@@ -889,6 +912,7 @@ int print_result(int nr_trace, int nr_thread, FILE *fp, int detail){
 		fprintf(fp, " Agg Total traffic = %f MB\n", (double)total_stat.total_bytes/MB);
 		fprintf(fp, " Agg Read traffic = %f MB\n", (double)total_stat.total_rbytes/MB);
 		fprintf(fp, " Agg Write traffic = %f MB\n", (double)total_stat.total_wbytes/MB);
+		fprintf(fp, " Agg Read Ratio = %f MB\n", (double)total_stat.total_rbytes/(double)total_stat.total_wbytes);
 
 		fprintf(fp, " Agg Avg Request Size Total = %f KB\n", (double)total_stat.total_bytes/total_stat.latency_count/KB);
 		fprintf(fp, " Agg Avg Request Size Read = %f KB\n", (double)total_stat.total_rbytes/total_stat.latency_count/KB);
