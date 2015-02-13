@@ -92,6 +92,7 @@ struct trace_info_t{
 	int io_size; // in bytes
 	int io_pages; // in pages
 
+	int synth_rand;
 	int synth_read;
 	int synth_write;
 	int synth_mixed;
@@ -123,6 +124,7 @@ struct thread_info_t{
 	int queue_count;
 	int active_count;
 	int fd;
+	int fsync_period;
 
 	struct io_job *th_jobs[MAX_QDEPTH];
 	void *th_buf[MAX_QDEPTH];

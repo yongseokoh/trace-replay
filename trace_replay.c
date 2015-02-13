@@ -223,6 +223,7 @@ void align_sector(struct thread_info_t *t_info, int *blkno, int *bcount){
 void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 	struct io_stat_t *io_stat = &t_info->io_stat;
 	double latency;
+	unsigned int count;
 
 	gettimeofday(&job->stop_time, NULL);
 
@@ -245,6 +246,7 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 		io_stat->latency_max = latency;
 
 	io_stat->latency_count ++;
+	count = io_stat->latency_count;
 
 	io_stat->total_bytes += job->bytes;
 	if(job->rw)
@@ -259,6 +261,11 @@ void update_iostat(struct thread_info_t *t_info, struct io_job *job){
 		io_stat->cur_wbytes += job->bytes;
 
 	pthread_spin_unlock(&io_stat->stat_lock);
+
+	if(count && t_info->fsync_period && 
+		(count % (t_info->fsync_period) == 0)){
+		fsync(t_info->fd);
+	}
 }
 
 struct simple_bio {
@@ -290,12 +297,12 @@ int trace_eof(struct trace_info_t *trace){
 
 	pthread_spin_lock(&trace->trace_lock);
 	if(trace->trace_io_cnt && trace->trace_io_cur>=trace->trace_io_cnt){
-		printf("trace->trace_io_cur>=trace->trace_io_cnt\n");
+		//printf("trace->trace_io_cur>=trace->trace_io_cnt\n");
 		res = 1;
 	}
 	if(trace->wanted_io_count && trace->trace_io_issue_count>=trace->wanted_io_count){
-		printf("trace->trace_io_issue_count>=trace->wanted_io_count %d %d\n "
-				,trace->wanted_io_count,  trace->trace_io_issue_count);
+		//printf("trace->trace_io_issue_count>=trace->wanted_io_count %d %d\n "
+		//		,trace->wanted_io_count,  trace->trace_io_issue_count);
 		res = 1;
 	}
 	pthread_spin_unlock(&trace->trace_lock);
@@ -312,19 +319,19 @@ int try_trace_reset(struct trace_info_t *trace, struct io_stat_t *io_stat){
 		trace->trace_repeat_count++;
 		trace_reset(trace);
 		synthetic_mix(trace);
-		printf(" trace reset timeout ... %f %f \n", trace->timeout, io_stat->execution_time);
+	//	printf(" trace reset timeout ... %f %f \n", trace->timeout, io_stat->execution_time);
 	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
 		trace->trace_repeat_count++;
 		trace_reset(trace);
 		synthetic_mix(trace);
-		printf(" trace reset wanted io ... \n");
+	//	printf(" trace reset wanted io ... \n");
 	}else if(trace->wanted_io_count && trace->trace_io_issue_count < trace->wanted_io_count){
 		//printf(" repeat trace file thread\n");
 	}else if(trace->trace_repeat_num && trace->trace_repeat_count < trace->trace_repeat_num) {
 		trace->trace_repeat_count++;
 		trace_reset(trace);
 		synthetic_mix(trace);
-		printf(" trace reset repeat num... \n");
+	//	printf(" trace reset repeat num... \n");
 		//printf(" repeat trace file thread %d ... %s\n", (int)tid, trace->tracename);
 	}else{
 		res = -1;
@@ -994,12 +1001,13 @@ void usage_help(){
 	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 trace.dat 1.0 0 0 trace.dat 0.5 0 0\n\n");
 
 	printf(" 2. Using Synthetic Workload \n");
-	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat rand wss utilization iosize \n");
+	printf(" #./trace_replay qdepth per_thread output timeout trace_repeat synth_type wss utilization iosize \n");
+	printf(" rand_read rand_write rand_mixed seq_read seq_write seq_mixed \n");
 	printf(" wss (in MB unit)\n");
 	printf(" utilization (in pecent unit)\n");
 	printf(" iosize (in KB unit)\n");
 	printf("\n");
-	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 rand 128 10 4\n\n");
+	printf(" #./trace_replay 32 2 result.txt 60 1 /dev/sdb1 rand_write 128 10 4\n\n");
 	
 }
 
@@ -1172,6 +1180,9 @@ void synthetic_mix(struct trace_info_t *trace){
 	int i, k;
 	struct timeval cur_tv;
 
+	if(!trace->synth_rand)
+		return;
+
 	if(!trace->synthetic)
 		return;
 
@@ -1226,6 +1237,7 @@ void synthetic_gen(struct trace_info_t *trace){
 		else if(trace->synth_read)
 			req->flags = 1;
 		else{
+		//else if(trace->synth_mixed)
 			if(RND(100)<50)
 				req->flags = 0;
 			else
@@ -1410,7 +1422,6 @@ int main(int argc, char **argv){
 	fprintf(result_fp, " Result file = %s \n", argv[ARG_OUTPUT]);
 
 	for(i=0;i<nr_trace;i++){
-		struct thread_info_t *t_info = &th_info[t];
 		struct trace_info_t *trace = &traces[i];
 		int fd;
 
@@ -1441,27 +1452,60 @@ int main(int argc, char **argv){
 		if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand")||
 			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_write")||
 			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_read")||
-			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_mixed")
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_mixed")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_write")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_read")||
+			!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_mixed")
 		){
 
 			trace->synthetic = 1;
+			trace->synth_rand = 1;
 			trace->synth_write = 1;
 			trace->synth_read = 0;
 			trace->synth_mixed = 0;
 
-			if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_write")){
+			if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand") || 
+				!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_write")){
+				trace->synth_rand = 1;
 				trace->synth_write = 1;
 				trace->synth_read = 0;
 				trace->synth_mixed = 0;
+				printf(" Synthetic workload: Random Write \n");
 			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_read")){
+				trace->synth_rand = 1;
 				trace->synth_write = 0;
 				trace->synth_read = 1;
 				trace->synth_mixed = 0;
+				printf(" Synthetic workload: Random Read \n");
 			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "rand_mixed")){
+				trace->synth_rand = 1;
 				trace->synth_write = 0;
 				trace->synth_read = 0;
 				trace->synth_mixed = 1;
+				printf(" Synthetic workload: Random Mixed Read Write\n");
+			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_write") ||
+					!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq")
+					){
+				trace->synth_rand = 0;
+				trace->synth_write = 1;
+				trace->synth_read = 0;
+				trace->synth_mixed = 0;
+				printf(" Synthetic workload: Sequential Write\n");
+			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_read")){
+				trace->synth_rand = 0;
+				trace->synth_write = 0;
+				trace->synth_read = 1;
+				trace->synth_mixed = 0;
+				printf(" Synthetic workload: Sequential Read\n");
+			}else if(!strcmp(argv[argc_offset+i*EXT_ARG_NUM], "seq_mixed")){
+				trace->synth_rand = 0;
+				trace->synth_write = 0;
+				trace->synth_read = 0;
+				trace->synth_mixed = 1;
+				printf(" Synthetic workload: Sequential Mixed Read Write\n");
 			}
+
 
 			trace->io_size = atoi(argv[argc_offset+i*EXT_ARG_NUM+3]); // KB
 			trace->io_size *= KB;
@@ -1499,14 +1543,14 @@ int main(int argc, char **argv){
 			wanted_io_count = trace->wanted_io_count;
 			synthetic_gen(trace);
 
-			printf(" WSS = %dMB\n", (int)trace->working_set_size);
-			printf(" I/O = %dMB\n", (int)((long long)trace->wanted_io_count*trace->io_size/MB));
+			printf(" WSS (Working Set Size) = %dMB\n", (int)trace->working_set_size);
+			printf(" I/O Size = %dMB\n", (int)((long long)trace->wanted_io_count*trace->io_size/MB));
 			if(trace->io_size*KB % PAGE_SIZE){
 				printf(" Invalid I/O size = %dKB \n", trace->io_size);
 				usage_help();
 				return 0;
 			}
-			printf(" io size = %dKB\n", (int)trace->io_size/KB);
+			printf(" Request Size = %dKB\n", (int)trace->io_size/KB);
 
 		}else{
 			trace->trace_buf_size = 1024;		
@@ -1573,6 +1617,13 @@ int main(int argc, char **argv){
 		t_info->queue_count = 0;
 		t_info->active_count = 0;
 		t_info->done = 0;
+
+#if 0
+		t_info->fsync_period = 1;
+		printf(" fsync period = %d \n", t_info->fsync_period);
+#else
+		t_info->fsync_period = 0;
+#endif 
 
 
 		open_flags = O_RDWR|O_DIRECT;
