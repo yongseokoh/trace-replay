@@ -53,7 +53,7 @@ $ ./trace_replay 32 8 result.txt 60 1 /dev/sdb1 rand_write 128 100 4
 
 ## Refences ##
 
-* Sungyong Ahn, "Improving I/O Resource Sharing of Linux Cgroup for NVMe SSDs on Multi-core Systems," USENIX HotStorage 2015
+* Sungyong Ahn, "Improving I/O Resource Sharing of Linux Cgroup for NVMe SSDs on Multi-core Systems," USENIX HotStorage 2016
 * Yongsseok Oh, "Enabling Cost-Effective Flash based Caching with an Array of of Commodity SSDs," ACM/USENIX MIDDLEWARE 2015
 * Eunjae Lee, "SSD caching to overcome small write problem of disk-based RAID in enterprise environments" ACM SAC 2015
 * Jaeho Kim, "Towards SLO Complying SSDs through OPS Isolation" USENIX FAST 2015
