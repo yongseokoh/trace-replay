@@ -30,10 +30,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
+#include <sys/time.h>
 
 
 #include "flist.h"
 #include "trace_replay.h"
+#include "disk_io.h"
 
 #define REFRESH_SLEEP 1000000
 

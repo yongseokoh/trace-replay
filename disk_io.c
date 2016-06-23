@@ -18,17 +18,22 @@
 #include "trace_replay.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/mount.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+
+#include "sgio.h"
 
 #ifndef ENOIOCTLCMD
 #	define ENOIOCTLCMD ENOTTY
 #endif
 
 
+int timeval_subtract (struct timeval *result, struct timeval *x, struct timeval * y);
 int verbose;
 
 int disk_open(const char *dev,int flag){
